@@ -74,6 +74,11 @@ onlyBuiltDependencies:
   - msw
   - unrs-resolver
 
+# pnpm 10.26+ uses this explicit map in addition to the legacy allowlist.
+# Keep it narrow: esbuild is the only newly requested lifecycle build.
+allowBuilds:
+  esbuild: true
+
 overrides:
   # replit uses linux-x64 only, we can exclude all other platforms
   "esbuild>@esbuild/darwin-arm64": "-"

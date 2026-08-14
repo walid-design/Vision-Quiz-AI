@@ -28,6 +28,11 @@ import {
   toQuizAnswer,
   type VisualSignature,
 } from '@/services/api';
+import {
+  compareQuestionFingerprints,
+  isUsefulQuestionText,
+  recognizeQuestionText,
+} from '@/services/localOcr';
 import { type AppStatus } from '@/types';
 
 const INITIAL_SCAN_DELAY_MS = 500;
@@ -37,10 +42,12 @@ const INITIAL_ANALYSIS_DEADLINE_MS = 1_600;
 const CHANGE_SETTLE_DEADLINE_MS = 3_000;
 const NO_QUESTION_RETRY_MS = 6_000;
 const TRANSIENT_ERROR_RETRY_MS = 4_000;
+const MAX_ERROR_RETRY_MS = 60_000;
 const MIN_REANALYSIS_GAP_MS = 3_500;
-const AUTO_RECHECK_INITIAL_MS = 5_000;
-const AUTO_RECHECK_STEP_MS = 2_000;
-const AUTO_RECHECK_MAX_MS = 12_000;
+const FALLBACK_RECHECK_MS = 45_000;
+const OCR_STABLE_SIMILARITY = 0.82;
+const OCR_CHANGE_SIMILARITY = 0.72;
+const REQUIRED_OCR_STABLE_SAMPLES = 2;
 
 type ServiceState = 'checking' | 'ready' | 'setup-required' | 'unreachable';
 
@@ -76,8 +83,12 @@ export default function LiveAssistScreen() {
   const stabilizationStartedAtRef = useRef(Date.now());
   const nextAnalysisAllowedAtRef = useRef(0);
   const autoRecheckAtRef = useRef(0);
-  const sameQuestionProbeCountRef = useRef(0);
   const visualChangeSamplesRef = useRef(0);
+  const latestOcrFingerprintRef = useRef('');
+  const ocrCandidateRef = useRef('');
+  const submittedOcrFingerprintRef = useRef('');
+  const ocrStableSamplesRef = useRef(0);
+  const consecutiveAnalysisErrorsRef = useRef(0);
   const forceAnalyzeRef = useRef(false);
   const cycleInFlightRef = useRef(false);
   const analysisInFlightRef = useRef(false);
@@ -104,6 +115,10 @@ export default function LiveAssistScreen() {
     pendingChangeRef.current = false;
     stableSamplesRef.current = 0;
     visualChangeSamplesRef.current = 0;
+    latestOcrFingerprintRef.current = '';
+    ocrCandidateRef.current = '';
+    submittedOcrFingerprintRef.current = '';
+    ocrStableSamplesRef.current = 0;
     forceAnalyzeRef.current = false;
     if (updateUi && mountedRef.current) {
       setRunning(false);
@@ -158,7 +173,11 @@ export default function LiveAssistScreen() {
     }
   }, [stopMonitoring]);
 
-  const captureAndAnalyze = useCallback(async (runId: number, signature: VisualSignature) => {
+  const captureAndAnalyze = useCallback(async (
+    runId: number,
+    signature: VisualSignature,
+    ocrFingerprint = latestOcrFingerprintRef.current,
+  ) => {
     if (
       !cameraRef.current ||
       !activeRef.current ||
@@ -206,6 +225,7 @@ export default function LiveAssistScreen() {
 
       if (!result.questionDetected) {
         hasSubmittedFrameRef.current = false;
+        submittedOcrFingerprintRef.current = '';
         nextAnalysisAllowedAtRef.current = Date.now() + NO_QUESTION_RETRY_MS;
         autoRecheckAtRef.current = 0;
         setStatus('WATCHING');
@@ -214,6 +234,8 @@ export default function LiveAssistScreen() {
       }
 
       hasSubmittedFrameRef.current = true;
+      submittedOcrFingerprintRef.current = ocrFingerprint;
+      consecutiveAnalysisErrorsRef.current = 0;
       const completedAt = Date.now();
       nextAnalysisAllowedAtRef.current = completedAt + MIN_REANALYSIS_GAP_MS;
       const questionKey = `${result.question}|${Object.values(result.options).join('|')}`
@@ -224,20 +246,14 @@ export default function LiveAssistScreen() {
       if (isNewQuestion) {
         const quizAnswer = toQuizAnswer(result, activeSubject);
         lastQuestionKeyRef.current = questionKey;
-        sameQuestionProbeCountRef.current = 0;
         addToHistory(quizAnswer);
         setCurrentResult(quizAnswer);
         if (settings.hapticAlerts) {
           void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
         }
-      } else {
-        sameQuestionProbeCountRef.current += 1;
       }
 
-      autoRecheckAtRef.current = completedAt + Math.min(
-        AUTO_RECHECK_MAX_MS,
-        AUTO_RECHECK_INITIAL_MS + sameQuestionProbeCountRef.current * AUTO_RECHECK_STEP_MS,
-      );
+      autoRecheckAtRef.current = completedAt + FALLBACK_RECHECK_MS;
 
       setError(null);
       setStatus('ANSWER_READY');
@@ -268,7 +284,13 @@ export default function LiveAssistScreen() {
       stableSamplesRef.current = 0;
       visualChangeSamplesRef.current = 0;
       stabilizationStartedAtRef.current = Date.now();
-      nextAnalysisAllowedAtRef.current = Date.now() + TRANSIENT_ERROR_RETRY_MS;
+      consecutiveAnalysisErrorsRef.current += 1;
+      const retryDelay = Math.min(
+        MAX_ERROR_RETRY_MS,
+        TRANSIENT_ERROR_RETRY_MS * 2 ** Math.max(0, consecutiveAnalysisErrorsRef.current - 1),
+      );
+      nextAnalysisAllowedAtRef.current = Date.now() + retryDelay;
+      autoRecheckAtRef.current = nextAnalysisAllowedAtRef.current + FALLBACK_RECHECK_MS;
       setStatus('WATCHING');
     } finally {
       analysisInFlightRef.current = false;
@@ -285,44 +307,103 @@ export default function LiveAssistScreen() {
 
     try {
       if (!cameraRef.current || !cameraReadyRef.current) return;
-      const frame = await cameraRef.current.takePictureAsync({ quality: 0.16 });
+      const frame = await cameraRef.current.takePictureAsync({ quality: 0.32 });
       if (!frame.uri || !activeRef.current || runId !== runIdRef.current) return;
 
-      const thumbnail = await ImageManipulator.manipulateAsync(
-        frame.uri,
-        [{ resize: { width: 96 } }],
-        { compress: 0.38, format: ImageManipulator.SaveFormat.JPEG, base64: true },
-      );
-      if (!thumbnail.base64 || !activeRef.current || runId !== runIdRef.current) return;
+      // Crop to the scan guide before OCR so browser chrome, timers and the
+      // taskbar do not make an unchanged question look different.
+      const cropOriginX = Math.max(0, Math.floor(frame.width * 0.02));
+      const cropOriginY = Math.max(0, Math.floor(frame.height * 0.18));
+      const cropWidth = Math.max(1, Math.min(frame.width - cropOriginX, Math.floor(frame.width * 0.96)));
+      const cropHeight = Math.max(1, Math.min(frame.height - cropOriginY, Math.floor(frame.height * 0.5)));
+      const monitorActions: ImageManipulator.Action[] = [{
+        crop: {
+          originX: cropOriginX,
+          originY: cropOriginY,
+          width: cropWidth,
+          height: cropHeight,
+        },
+      }];
+      if (cropWidth > 1100) monitorActions.push({ resize: { width: 1100 } });
 
-      const signature = createVisualSignature(thumbnail.base64);
+      const monitorFrame = await ImageManipulator.manipulateAsync(
+        frame.uri,
+        monitorActions,
+        { compress: 0.65, format: ImageManipulator.SaveFormat.JPEG, base64: true },
+      );
+      if (!monitorFrame.base64 || !activeRef.current || runId !== runIdRef.current) return;
+
+      const signature = createVisualSignature(monitorFrame.base64);
       const previous = previousSignatureRef.current;
       previousSignatureRef.current = signature;
+
+      const localOcr = await recognizeQuestionText(monitorFrame.uri);
+      const ocrUseful = localOcr.available && isUsefulQuestionText(localOcr.fingerprint);
+      const ocrFingerprint = ocrUseful ? localOcr.fingerprint : '';
+      if (ocrUseful) {
+        latestOcrFingerprintRef.current = ocrFingerprint;
+        const candidateSimilarity = compareQuestionFingerprints(ocrCandidateRef.current, ocrFingerprint);
+        if (ocrCandidateRef.current && candidateSimilarity >= OCR_STABLE_SIMILARITY) {
+          ocrStableSamplesRef.current += 1;
+        } else {
+          ocrCandidateRef.current = ocrFingerprint;
+          ocrStableSamplesRef.current = 1;
+        }
+        if (hasSubmittedFrameRef.current && !submittedOcrFingerprintRef.current) {
+          submittedOcrFingerprintRef.current = ocrFingerprint;
+        }
+      } else {
+        latestOcrFingerprintRef.current = '';
+        ocrStableSamplesRef.current = 0;
+      }
+
       const now = Date.now();
       const canAnalyze = now >= nextAnalysisAllowedAtRef.current;
+      const submittedOcrSimilarity = submittedOcrFingerprintRef.current && ocrFingerprint
+        ? compareQuestionFingerprints(submittedOcrFingerprintRef.current, ocrFingerprint)
+        : 1;
+      const ocrCandidateChanged =
+        hasSubmittedFrameRef.current &&
+        ocrUseful &&
+        Boolean(submittedOcrFingerprintRef.current) &&
+        submittedOcrSimilarity < OCR_CHANGE_SIMILARITY;
+      const ocrChangeConfirmed =
+        ocrCandidateChanged && ocrStableSamplesRef.current >= REQUIRED_OCR_STABLE_SAMPLES;
 
-      if (forceAnalyzeRef.current && now >= nextAnalysisAllowedAtRef.current) {
+      if (forceAnalyzeRef.current && canAnalyze) {
         forceAnalyzeRef.current = false;
-        await captureAndAnalyze(runId, signature);
+        await captureAndAnalyze(runId, signature, ocrFingerprint);
         return;
       }
 
-      // Never depend entirely on visual heuristics. The first question starts
-      // automatically, and answered screens are periodically rechecked with an
-      // adaptive backoff so text-only changes cannot require a manual tap.
+      if (ocrCandidateChanged && !ocrChangeConfirmed) {
+        setStatus('CHANGE_DETECTED');
+        setGuidance('New question detected - hold steady');
+      }
+      if (ocrChangeConfirmed && canAnalyze) {
+        setGuidance('New question detected - reading it now');
+        await captureAndAnalyze(runId, signature, ocrFingerprint);
+        return;
+      }
+
+      // ML Kit text is the primary trigger. Visual comparison and one slow
+      // safety check remain available when native OCR cannot read the frame.
+      const elapsedStabilizing = now - stabilizationStartedAtRef.current;
+      const localTextReady = ocrUseful && ocrStableSamplesRef.current >= REQUIRED_OCR_STABLE_SAMPLES;
       const initialAnalysisDue =
         !hasSubmittedFrameRef.current &&
         canAnalyze &&
-        now - stabilizationStartedAtRef.current >= INITIAL_ANALYSIS_DEADLINE_MS;
+        (localTextReady || elapsedStabilizing >= CHANGE_SETTLE_DEADLINE_MS);
       const automaticRecheckDue =
         hasSubmittedFrameRef.current &&
         canAnalyze &&
+        !ocrUseful &&
         autoRecheckAtRef.current > 0 &&
         now >= autoRecheckAtRef.current;
 
       if (initialAnalysisDue || automaticRecheckDue) {
         setGuidance(initialAnalysisDue ? 'Reading the visible question…' : 'Checking for the next question…');
-        await captureAndAnalyze(runId, signature);
+        await captureAndAnalyze(runId, signature, ocrFingerprint);
         return;
       }
 
@@ -348,18 +429,25 @@ export default function LiveAssistScreen() {
         const stableThreshold = Math.max(0.011, Math.min(0.015, changeThreshold * 0.55));
         const isStable = score <= stableThreshold;
 
-        if (settings.debugMode) {
+        if (settings.debugMode && !localOcr.available) {
           setDebugInfo(
             `Frame ${(score * 100).toFixed(1)}% · question ${(referenceScore * 100).toFixed(1)}% · detail ${(signature.sharpness * 100).toFixed(1)}%`,
           );
         }
+        if (settings.debugMode && localOcr.available) {
+          const match = submittedOcrFingerprintRef.current && ocrFingerprint
+            ? ` - match ${Math.round(submittedOcrSimilarity * 100)}%`
+            : '';
+          setDebugInfo(`Local OCR ${ocrUseful ? `${localOcr.text.length} chars` : 'searching'}${match}`);
+        }
 
-        visualChangeSamplesRef.current = referenceScore >= changeThreshold
+        visualChangeSamplesRef.current = !ocrUseful && referenceScore >= changeThreshold
           ? visualChangeSamplesRef.current + 1
           : 0;
 
         if (
           hasSubmittedFrameRef.current &&
+          !ocrUseful &&
           !pendingChangeRef.current &&
           visualChangeSamplesRef.current >= VISUAL_CHANGE_CONFIRM_SAMPLES
         ) {
@@ -371,7 +459,7 @@ export default function LiveAssistScreen() {
           setGuidance('New content detected · Hold steady');
         }
 
-        if (!hasSubmittedFrameRef.current) {
+        if (!hasSubmittedFrameRef.current && !ocrUseful) {
           stableSamplesRef.current = isStable ? stableSamplesRef.current + 1 : 0;
           const deadlineReached = now - stabilizationStartedAtRef.current >= INITIAL_ANALYSIS_DEADLINE_MS;
           if (canAnalyze && stableSamplesRef.current > 0) {
@@ -379,9 +467,12 @@ export default function LiveAssistScreen() {
             setGuidance('Question detected · Hold steady');
           }
           if (canAnalyze && (stableSamplesRef.current >= REQUIRED_STABLE_SAMPLES || deadlineReached)) {
-            await captureAndAnalyze(runId, signature);
+            await captureAndAnalyze(runId, signature, ocrFingerprint);
           }
-        } else if (pendingChangeRef.current) {
+        } else if (!hasSubmittedFrameRef.current) {
+          setStatus('STABILIZING');
+          setGuidance('Question text detected - hold steady');
+        } else if (!ocrUseful && pendingChangeRef.current) {
           stableSamplesRef.current = isStable ? stableSamplesRef.current + 1 : 0;
           const deadlineReached = now - stabilizationStartedAtRef.current >= CHANGE_SETTLE_DEADLINE_MS;
           if (stableSamplesRef.current > 0) {
@@ -389,7 +480,7 @@ export default function LiveAssistScreen() {
             setGuidance('New question detected · Finishing capture');
           }
           if (canAnalyze && (stableSamplesRef.current >= REQUIRED_STABLE_SAMPLES || deadlineReached)) {
-            await captureAndAnalyze(runId, signature);
+            await captureAndAnalyze(runId, signature, ocrFingerprint);
           }
         } else if (currentResultRef.current) {
           setStatus('ANSWER_READY');
@@ -427,7 +518,11 @@ export default function LiveAssistScreen() {
     stableSamplesRef.current = 0;
     visualChangeSamplesRef.current = 0;
     autoRecheckAtRef.current = 0;
-    sameQuestionProbeCountRef.current = 0;
+    latestOcrFingerprintRef.current = '';
+    ocrCandidateRef.current = '';
+    submittedOcrFingerprintRef.current = '';
+    ocrStableSamplesRef.current = 0;
+    consecutiveAnalysisErrorsRef.current = 0;
     stabilizationStartedAtRef.current = Date.now();
     nextAnalysisAllowedAtRef.current = 0;
     setRunning(true);

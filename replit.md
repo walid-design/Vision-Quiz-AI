@@ -31,16 +31,30 @@ Provider credentials are read only by the API server. They must never use an `EX
 
 ## Live Assist flow
 
-1. Create dependency-free visual fingerprints from tiny monitoring frames locally.
-2. Capture when the frame stabilizes, with a short deadline so camera noise or monitor flicker can never block the first answer indefinitely.
-3. Confirm visual changes across consecutive frames and use an adaptive periodic recheck as a backstop, so text-only changes never require a manual tap.
-4. Automatically prepare a readable full-frame image.
-5. Use a fast vision pass for the common case and the stronger model only when confidence is low or the question is ambiguous.
-6. Display the answer while monitoring continues for the next question.
+1. Crop the camera preview to the central question area on the phone.
+2. Run Google ML Kit OCR locally and create a normalized text fingerprint.
+3. Confirm the recognized text across consecutive frames and call the AI only for the first question or when the question text changes materially.
+4. Fall back to visual fingerprints and a slow 45-second safety check when native OCR is unavailable or cannot read the frame.
+5. Automatically prepare a readable full-frame image for the answer request.
+6. Use a fast vision pass for the common case and the stronger model only when confidence is low or the question is ambiguous.
+7. Display the answer while local monitoring continues for the next question.
 
 Incomplete, cut-off, or unreadable questions return camera guidance rather than a guessed answer. The app stores up to 200 answer records locally in AsyncStorage.
 
 The live screen checks `/api/quiz-readiness` before monitoring. If no provider is connected, it shows an actionable setup card instead of waiting indefinitely. **Analyze now** remains an optional fallback; initial and subsequent questions are submitted automatically.
+
+## Android local OCR build
+
+ML Kit is native Android code and is not bundled inside the public Expo Go app. Expo Go remains supported through visual-change fallback, but local OCR requires the project's custom development client.
+
+From `artifacts/mobile`:
+
+1. Sign in to Expo with `npx eas-cli login`.
+2. Run `npx eas-cli build --platform android --profile development`.
+3. Install the resulting APK on the Android phone.
+4. Start the Replit mobile development workflow and open it with the installed VisionQuiz development client rather than Expo Go.
+
+The `development` and `preview` EAS profiles produce installable Android APKs. A new native build is required only when native dependencies or native configuration change; TypeScript and UI updates continue to load through Metro.
 
 ## Notes
 
