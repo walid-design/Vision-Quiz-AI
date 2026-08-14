@@ -266,7 +266,7 @@ async function callOpenAI(
     : `Analyze this multiple-choice question.${subjectCtx}`;
 
   const response = await getOpenAIClient().chat.completions.create({
-    model: "gpt-4o",
+    model: "gpt-5.6-terra",
     messages: [
       { role: "system", content: SYSTEM_PROMPT },
       {
@@ -283,8 +283,7 @@ async function callOpenAI(
         ],
       },
     ],
-    max_tokens: 900,
-    temperature: 0.1,
+    max_completion_tokens: 900,
     response_format: {
       type: "json_schema",
       json_schema: {
