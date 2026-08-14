@@ -20,9 +20,11 @@ import { AnswerCard } from '@/components/AnswerCard';
 import { StatusIndicator } from '@/components/StatusIndicator';
 import { useApp } from '@/context/AppContext';
 import {
+  ApiRequestError,
   analyzeQuestion,
   computeChangeScore,
   createVisualSignature,
+  getQuizReadiness,
   toQuizAnswer,
   type VisualSignature,
 } from '@/services/api';
@@ -30,6 +32,13 @@ import { type AppStatus } from '@/types';
 
 const INITIAL_SCAN_DELAY_MS = 500;
 const REQUIRED_STABLE_SAMPLES = 2;
+const INITIAL_ANALYSIS_DEADLINE_MS = 2_400;
+const CHANGE_SETTLE_DEADLINE_MS = 3_000;
+const NO_QUESTION_RETRY_MS = 6_000;
+const TRANSIENT_ERROR_RETRY_MS = 4_000;
+const MIN_REANALYSIS_GAP_MS = 5_000;
+
+type ServiceState = 'checking' | 'ready' | 'setup-required' | 'unreachable';
 
 export default function LiveAssistScreen() {
   const insets = useSafeAreaInsets();
@@ -43,6 +52,8 @@ export default function LiveAssistScreen() {
   const [guidance, setGuidance] = useState('Point the camera at a complete multiple-choice question.');
   const [error, setError] = useState<string | null>(null);
   const [debugInfo, setDebugInfo] = useState('');
+  const [serviceState, setServiceState] = useState<ServiceState>('checking');
+  const [serviceMessage, setServiceMessage] = useState('Checking the AI service…');
 
   const cameraRef = useRef<CameraView>(null);
   const mountedRef = useRef(true);
@@ -52,10 +63,18 @@ export default function LiveAssistScreen() {
   const runIdRef = useRef(0);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const abortRef = useRef<AbortController | null>(null);
+  const readinessAbortRef = useRef<AbortController | null>(null);
   const previousSignatureRef = useRef<VisualSignature | null>(null);
+  const submittedSignatureRef = useRef<VisualSignature | null>(null);
   const pendingChangeRef = useRef(false);
   const stableSamplesRef = useRef(0);
   const hasSubmittedFrameRef = useRef(false);
+  const stabilizationStartedAtRef = useRef(Date.now());
+  const nextAnalysisAllowedAtRef = useRef(0);
+  const forceAnalyzeRef = useRef(false);
+  const cycleInFlightRef = useRef(false);
+  const analysisInFlightRef = useRef(false);
+  const serviceReadyRef = useRef(false);
   const lastQuestionKeyRef = useRef<string | null>(null);
   const currentResultRef = useRef(currentResult);
 
@@ -77,6 +96,7 @@ export default function LiveAssistScreen() {
     previousSignatureRef.current = null;
     pendingChangeRef.current = false;
     stableSamplesRef.current = 0;
+    forceAnalyzeRef.current = false;
     if (updateUi && mountedRef.current) {
       setRunning(false);
       setStatus('IDLE');
@@ -84,8 +104,62 @@ export default function LiveAssistScreen() {
     }
   }, [clearScheduledWork]);
 
-  const captureAndAnalyze = useCallback(async (runId: number) => {
-    if (!cameraRef.current || !activeRef.current || runId !== runIdRef.current) return;
+  const checkServiceReadiness = useCallback(async () => {
+    readinessAbortRef.current?.abort();
+    const controller = new AbortController();
+    readinessAbortRef.current = controller;
+    setServiceState('checking');
+    setServiceMessage('Checking the AI service…');
+    setStatus('CONNECTING');
+    setGuidance('Connecting Live Assist…');
+
+    try {
+      const readiness = await getQuizReadiness(controller.signal);
+      if (controller.signal.aborted || !mountedRef.current) return;
+
+      serviceReadyRef.current = readiness.ready;
+      setServiceMessage(readiness.message);
+      if (readiness.ready) {
+        setServiceState('ready');
+        setError(null);
+        setStatus(currentResultRef.current ? 'ANSWER_READY' : 'WATCHING');
+        setGuidance(
+          currentResultRef.current
+            ? 'Answer ready · Watching for the next question'
+            : 'AI connected · Looking for a complete question…',
+        );
+      } else {
+        stopMonitoring(false);
+        setRunning(false);
+        setServiceState('setup-required');
+        setStatus('SETUP_REQUIRED');
+        setGuidance('Connect the AI service to receive answers.');
+      }
+    } catch (caught: unknown) {
+      if (controller.signal.aborted || !mountedRef.current) return;
+      const message = caught instanceof Error ? caught.message : 'The AI service is unreachable.';
+      stopMonitoring(false);
+      serviceReadyRef.current = false;
+      setRunning(false);
+      setServiceState('unreachable');
+      setServiceMessage(message);
+      setStatus('SETUP_REQUIRED');
+      setGuidance('The AI service is currently unreachable.');
+    } finally {
+      if (readinessAbortRef.current === controller) readinessAbortRef.current = null;
+    }
+  }, [stopMonitoring]);
+
+  const captureAndAnalyze = useCallback(async (runId: number, signature: VisualSignature) => {
+    if (
+      !cameraRef.current ||
+      !activeRef.current ||
+      runId !== runIdRef.current ||
+      analysisInFlightRef.current
+    ) return;
+
+    analysisInFlightRef.current = true;
+    submittedSignatureRef.current = signature;
 
     try {
       setStatus('CAPTURING');
@@ -117,16 +191,21 @@ export default function LiveAssistScreen() {
       abortRef.current = null;
       if (!activeRef.current || runId !== runIdRef.current) return;
 
-      hasSubmittedFrameRef.current = true;
       pendingChangeRef.current = false;
       stableSamplesRef.current = 0;
+      previousSignatureRef.current = null;
+      stabilizationStartedAtRef.current = Date.now();
 
       if (!result.questionDetected) {
+        hasSubmittedFrameRef.current = false;
+        nextAnalysisAllowedAtRef.current = Date.now() + NO_QUESTION_RETRY_MS;
         setStatus('WATCHING');
         setGuidance(result.captureGuidance || 'Move closer and include every answer choice.');
         return;
       }
 
+      hasSubmittedFrameRef.current = true;
+      nextAnalysisAllowedAtRef.current = Date.now() + MIN_REANALYSIS_GAP_MS;
       const questionKey = `${result.question}|${Object.values(result.options).join('|')}`
         .toLocaleLowerCase()
         .replace(/\s+/g, ' ')
@@ -151,18 +230,38 @@ export default function LiveAssistScreen() {
       abortRef.current = null;
       if (!activeRef.current || runId !== runIdRef.current) return;
       const message = caught instanceof Error ? caught.message : 'Analysis failed. Please try again.';
-      if (message !== 'Analysis cancelled') {
-        setError(message);
-        setGuidance('Hold steady while Live Assist reconnects…');
+      if (message === 'Analysis cancelled') return;
+
+      if (caught instanceof ApiRequestError && caught.code === 'CONFIG_ERROR') {
+        serviceReadyRef.current = false;
+        activeRef.current = false;
+        setRunning(false);
+        setServiceState('setup-required');
+        setServiceMessage(message);
+        setStatus('SETUP_REQUIRED');
+        setGuidance('Connect the AI service to receive answers.');
+        return;
       }
-      pendingChangeRef.current = true;
+
+      setError(message);
+      setGuidance('Live Assist will retry automatically…');
+      pendingChangeRef.current = hasSubmittedFrameRef.current;
       stableSamplesRef.current = 0;
+      stabilizationStartedAtRef.current = Date.now();
+      nextAnalysisAllowedAtRef.current = Date.now() + TRANSIENT_ERROR_RETRY_MS;
       setStatus('WATCHING');
+    } finally {
+      analysisInFlightRef.current = false;
     }
   }, [addToHistory, settings]);
 
   const runMonitoringCycle = useCallback(async function cycle(runId: number): Promise<void> {
     if (!activeRef.current || runId !== runIdRef.current) return;
+    if (cycleInFlightRef.current) {
+      timerRef.current = setTimeout(() => void cycle(runId), 250);
+      return;
+    }
+    cycleInFlightRef.current = true;
 
     try {
       if (!cameraRef.current || !cameraReadyRef.current) return;
@@ -179,36 +278,74 @@ export default function LiveAssistScreen() {
       const signature = createVisualSignature(thumbnail.base64);
       const previous = previousSignatureRef.current;
       previousSignatureRef.current = signature;
+      const now = Date.now();
+
+      if (forceAnalyzeRef.current && now >= nextAnalysisAllowedAtRef.current) {
+        forceAnalyzeRef.current = false;
+        await captureAndAnalyze(runId, signature);
+        return;
+      }
 
       if (!previous) {
         stableSamplesRef.current = 0;
-        setStatus(currentResultRef.current ? 'ANSWER_READY' : 'STABILIZING');
-        setGuidance(currentResultRef.current ? 'Watching for the next question' : 'Hold steady for a moment…');
+        if (currentResultRef.current) {
+          setStatus('ANSWER_READY');
+          setGuidance('Watching for the next question');
+        } else if (now >= nextAnalysisAllowedAtRef.current) {
+          setStatus('STABILIZING');
+          setGuidance('Hold steady for a moment…');
+        }
       } else {
         const score = computeChangeScore(previous.pixels, signature.pixels);
+        const referenceScore = submittedSignatureRef.current
+          ? computeChangeScore(submittedSignatureRef.current.pixels, signature.pixels)
+          : 0;
         // The setting is expressed as sensitivity: a higher value lowers the
         // visual-difference threshold and reacts to smaller screen changes.
         const changeThreshold = Math.max(0.018, 0.1 - settings.changeSensitivity * 0.45);
-        const stableThreshold = Math.max(0.006, changeThreshold * 0.25);
+        // Camera noise and monitor refresh patterns can exceed very small
+        // thresholds even when the phone is still, so allow a practical floor.
+        const stableThreshold = Math.max(0.016, Math.min(0.035, changeThreshold * 0.48));
         const isStable = score <= stableThreshold;
+        const canAnalyze = now >= nextAnalysisAllowedAtRef.current;
 
         if (settings.debugMode) {
-          setDebugInfo(`Visual change ${(score * 100).toFixed(1)}% · detail ${(signature.sharpness * 100).toFixed(1)}%`);
+          setDebugInfo(
+            `Frame ${(score * 100).toFixed(1)}% · question ${(referenceScore * 100).toFixed(1)}% · detail ${(signature.sharpness * 100).toFixed(1)}%`,
+          );
         }
 
-        if (hasSubmittedFrameRef.current && score >= changeThreshold) {
+        if (
+          hasSubmittedFrameRef.current &&
+          !pendingChangeRef.current &&
+          referenceScore >= changeThreshold
+        ) {
           pendingChangeRef.current = true;
           stableSamplesRef.current = 0;
+          stabilizationStartedAtRef.current = now;
           setStatus('CHANGE_DETECTED');
           setGuidance('New content detected · Hold steady');
-        } else if (!hasSubmittedFrameRef.current || pendingChangeRef.current) {
+        }
+
+        if (!hasSubmittedFrameRef.current) {
           stableSamplesRef.current = isStable ? stableSamplesRef.current + 1 : 0;
-          if (stableSamplesRef.current > 0) {
+          const deadlineReached = now - stabilizationStartedAtRef.current >= INITIAL_ANALYSIS_DEADLINE_MS;
+          if (canAnalyze && stableSamplesRef.current > 0) {
             setStatus('STABILIZING');
             setGuidance('Question detected · Hold steady');
           }
-          if (stableSamplesRef.current >= REQUIRED_STABLE_SAMPLES) {
-            await captureAndAnalyze(runId);
+          if (canAnalyze && (stableSamplesRef.current >= REQUIRED_STABLE_SAMPLES || deadlineReached)) {
+            await captureAndAnalyze(runId, signature);
+          }
+        } else if (pendingChangeRef.current) {
+          stableSamplesRef.current = isStable ? stableSamplesRef.current + 1 : 0;
+          const deadlineReached = now - stabilizationStartedAtRef.current >= CHANGE_SETTLE_DEADLINE_MS;
+          if (stableSamplesRef.current > 0) {
+            setStatus('STABILIZING');
+            setGuidance('New question detected · Finishing capture');
+          }
+          if (canAnalyze && (stableSamplesRef.current >= REQUIRED_STABLE_SAMPLES || deadlineReached)) {
+            await captureAndAnalyze(runId, signature);
           }
         } else if (currentResultRef.current) {
           setStatus('ANSWER_READY');
@@ -223,6 +360,7 @@ export default function LiveAssistScreen() {
         setStatus('WATCHING');
       }
     } finally {
+      cycleInFlightRef.current = false;
       if (activeRef.current && runId === runIdRef.current) {
         timerRef.current = setTimeout(
           () => void cycle(runId),
@@ -233,7 +371,7 @@ export default function LiveAssistScreen() {
   }, [captureAndAnalyze, settings]);
 
   const startMonitoring = useCallback(() => {
-    if (!cameraReadyRef.current || !permission?.granted || activeRef.current) return;
+    if (!serviceReadyRef.current || !cameraReadyRef.current || !permission?.granted || activeRef.current) return;
     clearScheduledWork();
     const runId = runIdRef.current + 1;
     runIdRef.current = runId;
@@ -241,6 +379,8 @@ export default function LiveAssistScreen() {
     previousSignatureRef.current = null;
     pendingChangeRef.current = false;
     stableSamplesRef.current = 0;
+    stabilizationStartedAtRef.current = Date.now();
+    nextAnalysisAllowedAtRef.current = 0;
     setRunning(true);
     setError(null);
     setStatus('WATCHING');
@@ -251,39 +391,73 @@ export default function LiveAssistScreen() {
   useFocusEffect(
     useCallback(() => {
       focusedRef.current = true;
-      if (cameraReadyRef.current && settings.autoStart) startMonitoring();
+      void checkServiceReadiness();
       return () => {
         focusedRef.current = false;
+        readinessAbortRef.current?.abort();
+        readinessAbortRef.current = null;
         stopMonitoring(false);
       };
-    }, [settings.autoStart, startMonitoring, stopMonitoring]),
+    }, [checkServiceReadiness, stopMonitoring]),
   );
 
   useEffect(() => {
     cameraReadyRef.current = cameraReady;
-    if (cameraReady && focusedRef.current && settings.autoStart) startMonitoring();
-  }, [cameraReady, settings.autoStart, startMonitoring]);
+    if (cameraReady && serviceState === 'ready' && focusedRef.current && settings.autoStart) startMonitoring();
+  }, [cameraReady, serviceState, settings.autoStart, startMonitoring]);
+
+  useEffect(() => {
+    if (serviceState === 'ready' && cameraReadyRef.current && focusedRef.current && settings.autoStart) {
+      startMonitoring();
+    }
+  }, [serviceState, settings.autoStart, startMonitoring]);
 
   useEffect(() => {
     const subscription = AppState.addEventListener('change', (nextState) => {
       if (nextState !== 'active') {
         stopMonitoring(false);
-      } else if (focusedRef.current && cameraReadyRef.current && settings.autoStart) {
-        startMonitoring();
+      } else if (focusedRef.current) {
+        if (serviceReadyRef.current && cameraReadyRef.current && settings.autoStart) startMonitoring();
+        else void checkServiceReadiness();
       }
     });
     return () => subscription.remove();
-  }, [settings.autoStart, startMonitoring, stopMonitoring]);
+  }, [checkServiceReadiness, settings.autoStart, startMonitoring, stopMonitoring]);
 
-  useEffect(() => () => {
-    mountedRef.current = false;
-    stopMonitoring(false);
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+      readinessAbortRef.current?.abort();
+      stopMonitoring(false);
+    };
   }, [stopMonitoring]);
 
   const handleCameraReady = useCallback(() => {
     cameraReadyRef.current = true;
     setCameraReady(true);
   }, []);
+
+  const requestImmediateAnalysis = useCallback(() => {
+    if (!serviceReadyRef.current) {
+      void checkServiceReadiness();
+      return;
+    }
+
+    if (!activeRef.current) startMonitoring();
+    forceAnalyzeRef.current = true;
+    nextAnalysisAllowedAtRef.current = 0;
+    stabilizationStartedAtRef.current = 0;
+    setError(null);
+    setStatus('CAPTURING');
+    setGuidance('Preparing a clear frame…');
+
+    if (!cycleInFlightRef.current && activeRef.current) {
+      if (timerRef.current) clearTimeout(timerRef.current);
+      const runId = runIdRef.current;
+      timerRef.current = setTimeout(() => void runMonitoringCycle(runId), 0);
+    }
+  }, [checkServiceReadiness, runMonitoringCycle, startMonitoring]);
 
   if (!permission) {
     return <LoadingScreen label="Preparing Live Assist…" />;
@@ -409,28 +583,73 @@ export default function LiveAssistScreen() {
           </ScrollView>
         )}
 
-        <View style={styles.controlBar}>
-          <View style={styles.controlText}>
-            <View style={[styles.liveDot, !running && styles.pausedDot]} />
-            <View>
-              <Text style={styles.controlTitle}>{running ? 'Live monitoring' : 'Monitoring paused'}</Text>
-              <Text style={styles.controlSubtitle}>{running ? 'Answers appear automatically' : 'Tap Resume to continue'}</Text>
+        {serviceState !== 'ready' ? (
+          <View style={styles.setupCard}>
+            <View style={styles.setupIcon}>
+              {serviceState === 'checking' ? (
+                <ActivityIndicator color="#38bdf8" size="small" />
+              ) : (
+                <Ionicons name="sparkles-outline" size={21} color="#38bdf8" />
+              )}
             </View>
+            <View style={styles.setupText}>
+              <Text style={styles.setupTitle}>
+                {serviceState === 'checking' ? 'Connecting AI' : 'Connect AI to begin'}
+              </Text>
+              <Text style={styles.setupMessage}>{serviceMessage}</Text>
+            </View>
+            {serviceState !== 'checking' && (
+              <TouchableOpacity
+                style={styles.retryButton}
+                onPress={() => void checkServiceReadiness()}
+                accessibilityRole="button"
+                accessibilityLabel="Check AI connection again"
+              >
+                <Ionicons name="refresh" size={18} color="#fff" />
+                <Text style={styles.retryText}>Check</Text>
+              </TouchableOpacity>
+            )}
           </View>
-          <TouchableOpacity
-            style={[styles.pauseButton, !running && styles.resumeButton]}
-            onPress={() => {
-              if (running) stopMonitoring(); else startMonitoring();
-              void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-            }}
-            activeOpacity={0.82}
-            accessibilityRole="button"
-            accessibilityLabel={running ? 'Pause Live Assist' : 'Resume Live Assist'}
-          >
-            <Ionicons name={running ? 'pause' : 'play'} size={19} color="#fff" />
-            <Text style={styles.pauseText}>{running ? 'Pause' : 'Resume'}</Text>
-          </TouchableOpacity>
-        </View>
+        ) : (
+          <>
+            {running && (
+              <TouchableOpacity
+                style={styles.analyzeNowButton}
+                onPress={requestImmediateAnalysis}
+                activeOpacity={0.84}
+                accessibilityRole="button"
+                accessibilityLabel="Analyze the visible question now"
+              >
+                <Ionicons name="scan-outline" size={17} color="#fff" />
+                <Text style={styles.analyzeNowText}>Analyze now</Text>
+              </TouchableOpacity>
+            )}
+            <View style={styles.controlBar}>
+              <View style={styles.controlText}>
+                <View style={[styles.liveDot, !running && styles.pausedDot]} />
+                <View style={styles.controlCopy}>
+                  <Text style={styles.controlTitle}>{running ? 'Live monitoring' : 'Monitoring paused'}</Text>
+                  <Text style={styles.controlSubtitle} numberOfLines={1}>
+                    {running ? 'Answers appear automatically' : 'Tap Resume to continue'}
+                  </Text>
+                </View>
+              </View>
+              <TouchableOpacity
+                style={[styles.pauseButton, !running && styles.resumeButton]}
+                onPress={() => {
+                  if (running) stopMonitoring(); else startMonitoring();
+                  void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                }}
+                activeOpacity={0.82}
+                accessibilityRole="button"
+                accessibilityLabel={running ? 'Pause Live Assist' : 'Resume Live Assist'}
+              >
+                <Ionicons name={running ? 'pause' : 'play'} size={19} color="#fff" />
+                <Text style={styles.pauseText}>{running ? 'Pause' : 'Resume'}</Text>
+              </TouchableOpacity>
+            </View>
+          </>
+        )}
       </View>
     </View>
   );
@@ -475,8 +694,18 @@ const styles = StyleSheet.create({
   debugText: { color: '#7dd3fc', fontSize: 10, fontFamily: 'Inter_500Medium' },
   bottomArea: { position: 'absolute', left: 0, right: 0, bottom: 0, paddingHorizontal: 14, gap: 10 },
   answerWrap: { maxHeight: Platform.OS === 'web' ? 360 : 330 },
+  setupCard: { minHeight: 92, padding: 14, borderRadius: 22, backgroundColor: 'rgba(7,10,23,0.94)', borderWidth: 1, borderColor: 'rgba(56,189,248,0.3)', flexDirection: 'row', alignItems: 'center', gap: 12 },
+  setupIcon: { width: 42, height: 42, borderRadius: 14, backgroundColor: 'rgba(56,189,248,0.12)', alignItems: 'center', justifyContent: 'center' },
+  setupText: { flex: 1, minWidth: 0 },
+  setupTitle: { color: '#f8fafc', fontSize: 14, fontFamily: 'Inter_700Bold' },
+  setupMessage: { color: '#9aa8cc', fontSize: 11, lineHeight: 16, marginTop: 4, fontFamily: 'Inter_400Regular' },
+  retryButton: { minWidth: 62, height: 40, paddingHorizontal: 10, borderRadius: 20, backgroundColor: '#0ea5e9', flexDirection: 'row', gap: 5, alignItems: 'center', justifyContent: 'center' },
+  retryText: { color: '#fff', fontSize: 11, fontFamily: 'Inter_600SemiBold' },
+  analyzeNowButton: { alignSelf: 'flex-end', height: 40, borderRadius: 20, paddingHorizontal: 14, backgroundColor: 'rgba(14,165,233,0.9)', borderWidth: 1, borderColor: 'rgba(125,211,252,0.7)', flexDirection: 'row', alignItems: 'center', gap: 7 },
+  analyzeNowText: { color: '#fff', fontSize: 12, fontFamily: 'Inter_600SemiBold' },
   controlBar: { minHeight: 72, paddingHorizontal: 14, paddingVertical: 10, borderRadius: 22, backgroundColor: 'rgba(7,10,23,0.9)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.13)', flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 10 },
   controlText: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: 10 },
+  controlCopy: { flex: 1, minWidth: 0 },
   liveDot: { width: 9, height: 9, borderRadius: 5, backgroundColor: '#10b981', shadowColor: '#10b981', shadowOpacity: 0.8, shadowRadius: 6 },
   pausedDot: { backgroundColor: '#64748b', shadowOpacity: 0 },
   controlTitle: { color: '#f8fafc', fontSize: 13, fontFamily: 'Inter_600SemiBold' },

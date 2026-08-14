@@ -21,17 +21,84 @@ export interface AnalysisError {
   message: string;
 }
 
+export interface QuizReadiness {
+  ready: boolean;
+  provider: 'openai' | 'replit-openai' | 'unconfigured';
+  message: string;
+}
+
+export class ApiRequestError extends Error {
+  constructor(
+    message: string,
+    public readonly code: string,
+    public readonly status: number,
+  ) {
+    super(message);
+    this.name = 'ApiRequestError';
+  }
+}
+
+function getApiUrl(path: string): string {
+  const domain = process.env.EXPO_PUBLIC_DOMAIN?.trim();
+  if (!domain) throw new ApiRequestError('The API domain is not configured.', 'CONFIG_ERROR', 0);
+  const origin = /^https?:\/\//i.test(domain) ? domain.replace(/\/$/, '') : `https://${domain}`;
+  return `${origin}/api/${path}`;
+}
+
+async function readError(response: Response): Promise<AnalysisError | null> {
+  try {
+    return await response.json();
+  } catch {
+    return null;
+  }
+}
+
+export async function getQuizReadiness(signal?: AbortSignal): Promise<QuizReadiness> {
+  const timeoutController = new AbortController();
+  const timeout = setTimeout(() => timeoutController.abort(), 8_000);
+  const abortFromCaller = () => timeoutController.abort();
+  signal?.addEventListener('abort', abortFromCaller, { once: true });
+
+  try {
+    const response = await fetch(getApiUrl('quiz-readiness'), {
+      signal: timeoutController.signal,
+      headers: { Accept: 'application/json' },
+    });
+    if (!response.ok) {
+      const errorBody = await readError(response);
+      throw new ApiRequestError(
+        errorBody?.message ?? `Server error ${response.status}`,
+        errorBody?.error ?? 'SERVER_ERROR',
+        response.status,
+      );
+    }
+    return response.json();
+  } catch (error) {
+    if (error instanceof ApiRequestError) throw error;
+    if (timeoutController.signal.aborted) {
+      throw new ApiRequestError(
+        signal?.aborted ? 'Readiness check cancelled' : 'The AI service did not respond. Restart the project and try again.',
+        signal?.aborted ? 'CANCELLED' : 'SERVICE_UNREACHABLE',
+        0,
+      );
+    }
+    throw new ApiRequestError(
+      error instanceof Error ? error.message : 'The AI service is unreachable.',
+      'SERVICE_UNREACHABLE',
+      0,
+    );
+  } finally {
+    clearTimeout(timeout);
+    signal?.removeEventListener('abort', abortFromCaller);
+  }
+}
+
 export async function analyzeQuestion(
   imageBase64: string,
   subject: string,
   confidenceThreshold = 0.85,
   signal?: AbortSignal,
 ): Promise<AnalysisResult> {
-  const domain = process.env.EXPO_PUBLIC_DOMAIN;
-  if (!domain) throw new Error('EXPO_PUBLIC_DOMAIN not configured');
-
-  const url = `https://${domain}/api/analyze-question`;
-
   const timeoutController = new AbortController();
   const timeout = setTimeout(() => timeoutController.abort(), 35_000);
   const abortFromCaller = () => timeoutController.abort();
@@ -39,7 +106,7 @@ export async function analyzeQuestion(
 
   let response: Response;
   try {
-    response = await fetch(url, {
+    response = await fetch(getApiUrl('analyze-question'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ imageBase64, subject, confidenceThreshold }),
@@ -56,9 +123,12 @@ export async function analyzeQuestion(
   }
 
   if (!response.ok) {
-    let errorBody: AnalysisError | null = null;
-    try { errorBody = await response.json(); } catch (_) {}
-    throw new Error(errorBody?.message ?? `Server error ${response.status}`);
+    const errorBody = await readError(response);
+    throw new ApiRequestError(
+      errorBody?.message ?? `Server error ${response.status}`,
+      errorBody?.error ?? 'ANALYSIS_ERROR',
+      response.status,
+    );
   }
 
   return response.json();

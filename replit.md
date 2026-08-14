@@ -10,11 +10,15 @@ VisionQuiz AI is an Expo mobile assistant that watches an external screen throug
 - `pnpm --filter @workspace/api-server run build` — build the production API bundle.
 - `pnpm --filter @workspace/api-spec run codegen` — regenerate the API client and Zod contracts.
 
-Required environment variables:
+Runtime configuration:
 
 - `PORT` — API or preview server port.
-- `OPENAI_API_KEY` — server-side key used for vision analysis.
 - `EXPO_PUBLIC_DOMAIN` — public API host embedded in the mobile bundle.
+- For AI access, use either:
+  - Replit-managed OpenAI: approve **OpenAI (Replit managed)** in Replit Integrations. Replit supplies the managed credential and base URL.
+  - Bring your own key: add `OPENAI_API_KEY` to Replit Secrets.
+
+Provider credentials are read only by the API server. They must never use an `EXPO_PUBLIC_` name or be placed in the mobile application.
 
 ## Architecture
 
@@ -26,13 +30,15 @@ Required environment variables:
 
 ## Live Assist flow
 
-1. Decode tiny monitoring frames into luminance signatures locally.
-2. Wait for a stable initial question or a stable visual change.
+1. Create dependency-free visual fingerprints from tiny monitoring frames locally.
+2. Capture when the frame stabilizes, with a short deadline so camera noise or monitor flicker can never block the first answer indefinitely.
 3. Automatically prepare a readable full-frame image.
 4. Ask the vision service to locate and extract one complete multiple-choice question.
 5. Display the answer while monitoring continues for the next question.
 
 Incomplete, cut-off, or unreadable questions return camera guidance rather than a guessed answer. The app stores up to 200 answer records locally in AsyncStorage.
+
+The live screen checks `/api/quiz-readiness` before monitoring. If no provider is connected, it shows an actionable setup card instead of waiting indefinitely. **Analyze now** is available as a manual fallback while automatic monitoring remains the default.
 
 ## Notes
 

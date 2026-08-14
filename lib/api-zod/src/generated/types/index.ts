@@ -11,3 +11,5 @@ export * from './errorResponse';
 export * from './healthStatus';
 export * from './quizAnalysisResult';
 export * from './quizAnalysisResultOptions';
+export * from './quizReadiness';
+export * from './quizReadinessProvider';

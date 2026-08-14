@@ -1,7 +1,11 @@
 import { Router } from "express";
-import { analyzeQuestionImage } from "../services/openaiService.js";
+import { analyzeQuestionImage, getAIReadiness } from "../services/openaiService.js";
 
 const router = Router();
+
+router.get("/quiz-readiness", (_req, res) => {
+  res.json(getAIReadiness());
+});
 
 router.post("/analyze-question", async (req, res) => {
   const body = req.body && typeof req.body === "object" ? req.body : {};
@@ -39,10 +43,11 @@ router.post("/analyze-question", async (req, res) => {
     return;
   }
 
-  if (!process.env["OPENAI_API_KEY"]) {
-    res.status(500).json({
+  const readiness = getAIReadiness();
+  if (!readiness.ready) {
+    res.status(503).json({
       error: "CONFIG_ERROR",
-      message: "OPENAI_API_KEY is not configured on the server. Add it to Replit Secrets.",
+      message: readiness.message,
     });
     return;
   }
@@ -52,6 +57,17 @@ router.post("/analyze-question", async (req, res) => {
     res.json(result);
   } catch (err: unknown) {
     req.log.error({ err, sessionId }, "Failed to analyze question");
+    const providerStatus =
+      err && typeof err === "object" && "status" in err
+        ? Number((err as { status?: unknown }).status)
+        : 0;
+    if (providerStatus === 401 || providerStatus === 403) {
+      res.status(503).json({
+        error: "CONFIG_ERROR",
+        message: "The OpenAI connection was rejected. Reconnect the Replit integration or replace the server key.",
+      });
+      return;
+    }
     res.status(500).json({
       error: "ANALYSIS_ERROR",
       message: "The question could not be analyzed right now. Please try again.",

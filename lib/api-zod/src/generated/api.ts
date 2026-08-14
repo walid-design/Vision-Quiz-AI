@@ -49,3 +49,13 @@ export const AnalyzeQuestionResponse = zod.object({
 })
 
 
+/**
+ * @summary Check whether the server can analyze quiz images
+ */
+export const QuizReadinessResponse = zod.object({
+  "ready": zod.boolean(),
+  "provider": zod.enum(['openai', 'replit-openai', 'unconfigured']),
+  "message": zod.string()
+})
+
+

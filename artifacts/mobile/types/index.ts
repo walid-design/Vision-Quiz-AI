@@ -1,5 +1,7 @@
 export type AppStatus =
   | 'IDLE'
+  | 'CONNECTING'
+  | 'SETUP_REQUIRED'
   | 'WATCHING'
   | 'CHANGE_DETECTED'
   | 'STABILIZING'

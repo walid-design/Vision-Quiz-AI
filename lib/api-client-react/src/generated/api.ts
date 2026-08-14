@@ -23,7 +23,8 @@ import type {
   AnalyzeQuestionRequest,
   ErrorResponse,
   HealthStatus,
-  QuizAnalysisResult
+  QuizAnalysisResult,
+  QuizReadiness
 } from './api.schemas';
 
 import { customFetch } from '../custom-fetch';
@@ -124,13 +125,6 @@ export function useHealthCheck<TData = Awaited<ReturnType<typeof healthCheck>>, 
 
   return withQueryKey(query, queryOptions.queryKey);
 }
-
-
-
-
-
-
-
 export const getAnalyzeQuestionUrl = () => {
 
 
@@ -202,3 +196,73 @@ export const useAnalyzeQuestion = <TError = ErrorType<ErrorResponse>,
       return useMutation(getAnalyzeQuestionMutationOptions(options));
     }
 
+export const getQuizReadinessUrl = () => {
+
+
+
+
+  return `/api/quiz-readiness`
+}
+
+/**
+ * @summary Check whether the server can analyze quiz images
+ */
+export const quizReadiness = async ( options?: Parameters<typeof customFetch>[1]): Promise<QuizReadiness> => {
+
+  return customFetch<QuizReadiness>(getQuizReadinessUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getQuizReadinessQueryKey = () => {
+    return [
+    `/api/quiz-readiness`
+    ] as const;
+    }
+
+
+export const getQuizReadinessQueryOptions = <TData = Awaited<ReturnType<typeof quizReadiness>>, TError = ErrorType<unknown>>( options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof quizReadiness>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getQuizReadinessQueryKey();
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof quizReadiness>>> = ({ signal }) => quizReadiness({ signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof quizReadiness>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type QuizReadinessQueryResult = NonNullable<Awaited<ReturnType<typeof quizReadiness>>>
+export type QuizReadinessQueryError = ErrorType<unknown>
+
+
+/**
+ * @summary Check whether the server can analyze quiz images
+ */
+
+export function useQuizReadiness<TData = Awaited<ReturnType<typeof quizReadiness>>, TError = ErrorType<unknown>>(
+  options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof quizReadiness>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getQuizReadinessQueryOptions(options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}

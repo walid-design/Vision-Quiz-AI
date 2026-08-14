@@ -57,6 +57,25 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+        "503":
+          description: AI provider is not configured or temporarily unavailable
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /quiz-readiness:
+    get:
+      operationId: quizReadiness
+      tags: [quiz]
+      summary: Check whether the server can analyze quiz images
+      responses:
+        "200":
+          description: AI provider readiness without exposing credentials
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/QuizReadiness"
 
 components:
   schemas:
@@ -154,4 +173,19 @@ components:
           type: string
       required:
         - error
+        - message
+
+    QuizReadiness:
+      type: object
+      properties:
+        ready:
+          type: boolean
+        provider:
+          type: string
+          enum: [openai, replit-openai, unconfigured]
+        message:
+          type: string
+      required:
+        - ready
+        - provider
         - message

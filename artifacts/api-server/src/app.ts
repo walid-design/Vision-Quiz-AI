@@ -48,6 +48,14 @@ app.use((err: unknown, req: express.Request, res: express.Response, next: expres
     return;
   }
 
+  if (bodyError.type === "entity.parse.failed") {
+    res.status(400).json({
+      error: "BAD_REQUEST",
+      message: "The request body must be valid JSON.",
+    });
+    return;
+  }
+
   req.log.error({ err }, "Unhandled API error");
   res.status(500).json({ error: "INTERNAL_ERROR", message: "Something went wrong while processing the request." });
 });

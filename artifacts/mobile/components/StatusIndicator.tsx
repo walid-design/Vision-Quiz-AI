@@ -9,6 +9,8 @@ interface Props {
 
 const STATUS_CONFIG: Record<AppStatus, { label: string; colorKey: 'success' | 'primary' | 'warning' | 'accent' | 'mutedForeground' | 'destructive' }> = {
   IDLE: { label: 'Paused', colorKey: 'mutedForeground' },
+  CONNECTING: { label: 'Connecting AI', colorKey: 'primary' },
+  SETUP_REQUIRED: { label: 'Connect AI', colorKey: 'warning' },
   WATCHING: { label: 'Live', colorKey: 'success' },
   CHANGE_DETECTED: { label: 'New question', colorKey: 'warning' },
   STABILIZING: { label: 'Hold steady', colorKey: 'warning' },

@@ -63,3 +63,18 @@ export interface ErrorResponse {
   message: string;
 }
 
+export type QuizReadinessProvider = typeof QuizReadinessProvider[keyof typeof QuizReadinessProvider];
+
+
+export const QuizReadinessProvider = {
+  openai: 'openai',
+  'replit-openai': 'replit-openai',
+  unconfigured: 'unconfigured',
+} as const;
+
+export interface QuizReadiness {
+  ready: boolean;
+  provider: QuizReadinessProvider;
+  message: string;
+}
+

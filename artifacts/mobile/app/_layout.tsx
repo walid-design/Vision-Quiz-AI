@@ -13,13 +13,15 @@ import {
 } from '@expo-google-fonts/inter';
 import { Stack } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
+import { Feather, Ionicons } from '@expo/vector-icons';
 import { setBaseUrl } from '@workspace/api-client-react';
 import { AppProvider } from '@/context/AppContext';
 
 // Set the API base URL — Expo bundles run outside the web proxy
 // and need an absolute URL to reach the shared API server.
 if (process.env.EXPO_PUBLIC_DOMAIN) {
-  setBaseUrl(`https://${process.env.EXPO_PUBLIC_DOMAIN}`);
+  const apiDomain = process.env.EXPO_PUBLIC_DOMAIN.trim().replace(/\/$/, '');
+  setBaseUrl(/^https?:\/\//i.test(apiDomain) ? apiDomain : `https://${apiDomain}`);
 }
 
 // Prevent the splash screen from auto-hiding before asset loading is complete.
@@ -41,6 +43,8 @@ export default function RootLayout() {
     Inter_500Medium,
     Inter_600SemiBold,
     Inter_700Bold,
+    ...Feather.font,
+    ...Ionicons.font,
   });
 
   useEffect(() => {

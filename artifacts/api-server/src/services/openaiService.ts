@@ -108,12 +108,79 @@ export interface AnalysisResult extends AnalysisStageResult {
 }
 
 let openaiClient: OpenAI | null = null;
+let openaiClientSignature = "";
+
+export type AIProvider = "openai" | "replit-openai" | "unconfigured";
+
+export interface AIReadiness {
+  ready: boolean;
+  provider: AIProvider;
+  message: string;
+}
+
+interface OpenAIConfiguration {
+  apiKey: string;
+  baseURL?: string;
+  provider: Exclude<AIProvider, "unconfigured">;
+}
+
+function resolveOpenAIConfiguration(): OpenAIConfiguration | null {
+  const directApiKey = process.env["OPENAI_API_KEY"]?.trim();
+  if (directApiKey) {
+    return {
+      apiKey: directApiKey,
+      baseURL: process.env["OPENAI_BASE_URL"]?.trim() || undefined,
+      provider: "openai",
+    };
+  }
+
+  const managedApiKey = process.env["AI_INTEGRATIONS_OPENAI_API_KEY"]?.trim();
+  const managedBaseURL = process.env["AI_INTEGRATIONS_OPENAI_BASE_URL"]?.trim();
+  if (managedApiKey && managedBaseURL) {
+    return {
+      apiKey: managedApiKey,
+      baseURL: managedBaseURL,
+      provider: "replit-openai",
+    };
+  }
+
+  return null;
+}
+
+export function getAIReadiness(): AIReadiness {
+  const configuration = resolveOpenAIConfiguration();
+  if (!configuration) {
+    return {
+      ready: false,
+      provider: "unconfigured",
+      message:
+        "Enable OpenAI (Replit managed) in Replit Integrations, or add OPENAI_API_KEY in Replit Secrets, then restart the app.",
+    };
+  }
+
+  return {
+    ready: true,
+    provider: configuration.provider,
+    message:
+      configuration.provider === "replit-openai"
+        ? "OpenAI is connected through Replit."
+        : "OpenAI is connected securely on the server.",
+  };
+}
 
 function getOpenAIClient(): OpenAI {
-  if (!openaiClient) {
-    const apiKey = process.env["OPENAI_API_KEY"];
-    if (!apiKey) throw new Error("OPENAI_API_KEY is not configured");
-    openaiClient = new OpenAI({ apiKey, timeout: 28_000, maxRetries: 1 });
+  const configuration = resolveOpenAIConfiguration();
+  if (!configuration) throw new Error("OpenAI is not configured");
+
+  const signature = `${configuration.provider}:${configuration.baseURL ?? "default"}:${configuration.apiKey.slice(-6)}`;
+  if (!openaiClient || signature !== openaiClientSignature) {
+    openaiClient = new OpenAI({
+      apiKey: configuration.apiKey,
+      baseURL: configuration.baseURL,
+      timeout: 28_000,
+      maxRetries: 1,
+    });
+    openaiClientSignature = signature;
   }
   return openaiClient;
 }
