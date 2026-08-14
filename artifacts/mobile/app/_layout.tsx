@@ -13,7 +13,6 @@ import {
 } from '@expo-google-fonts/inter';
 import { Stack } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
-import { Feather, Ionicons } from '@expo/vector-icons';
 import { setBaseUrl } from '@workspace/api-client-react';
 import { AppProvider } from '@/context/AppContext';
 
@@ -43,8 +42,6 @@ export default function RootLayout() {
     Inter_500Medium,
     Inter_600SemiBold,
     Inter_700Bold,
-    ...Feather.font,
-    ...Ionicons.font,
   });
 
   useEffect(() => {

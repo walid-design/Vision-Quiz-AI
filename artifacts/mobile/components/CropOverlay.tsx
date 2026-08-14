@@ -1,6 +1,6 @@
 import React, { useRef } from 'react';
 import { View, StyleSheet, PanResponder, Text } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
+import { AppIcon } from '@/components/AppIcon';
 import { CropRegion } from '@/types';
 
 interface Props {
@@ -73,7 +73,7 @@ export function CropOverlay({ region, onRegionChange, containerWidth, containerH
         style={[styles.resizeHandle, { backgroundColor: ELECTRIC_BLUE }]}
         hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
       >
-        <Ionicons name="resize" size={16} color="#fff" />
+        <AppIcon name="resize" size={16} color="#fff" />
       </View>
 
       {/* Border */}

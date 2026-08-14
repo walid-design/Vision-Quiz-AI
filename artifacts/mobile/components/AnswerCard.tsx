@@ -1,6 +1,6 @@
 import React from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, Platform } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
+import { AppIcon } from '@/components/AppIcon';
 import { useColors } from '@/hooks/useColors';
 import { AnalysisResult } from '@/services/api';
 
@@ -30,7 +30,7 @@ export function AnswerCard({ result, onDismiss, onMarkCorrect, onMarkIncorrect, 
             accessibilityRole="button"
             accessibilityLabel="Dismiss answer"
           >
-            <Ionicons name="close" size={20} color={colors.mutedForeground} />
+            <AppIcon name="close" size={20} color={colors.mutedForeground} />
           </TouchableOpacity>
         )}
       </View>
@@ -50,14 +50,14 @@ export function AnswerCard({ result, onDismiss, onMarkCorrect, onMarkIncorrect, 
       {/* Confidence + verification */}
       <View style={styles.metaRow}>
         <View style={[styles.confBadge, { backgroundColor: `${confidenceColor}22` }]}>
-          <Ionicons name="stats-chart" size={12} color={confidenceColor} />
+          <AppIcon name="chart" size={12} color={confidenceColor} />
           <Text style={[styles.confText, { color: confidenceColor }]}>{confidencePct}% Confidence</Text>
         </View>
 
         {result.needsVerification && (
           <View style={[styles.verifiedBadge, { backgroundColor: result.verified ? `${colors.success}22` : `${colors.warning}22` }]}>
-            <Ionicons
-              name={result.verified ? 'checkmark-circle' : 'alert-circle'}
+            <AppIcon
+              name={result.verified ? 'check-circle' : 'alert-circle'}
               size={12}
               color={result.verified ? colors.success : colors.warning}
             />
@@ -69,7 +69,7 @@ export function AnswerCard({ result, onDismiss, onMarkCorrect, onMarkIncorrect, 
 
         {result.processingTimeMs > 0 && (
           <View style={[styles.confBadge, { backgroundColor: `${colors.mutedForeground}22` }]}>
-            <Ionicons name="time-outline" size={12} color={colors.mutedForeground} />
+            <AppIcon name="clock" size={12} color={colors.mutedForeground} />
             <Text style={[styles.confText, { color: colors.mutedForeground }]}>
               {(result.processingTimeMs / 1000).toFixed(1)}s
             </Text>
@@ -99,7 +99,7 @@ export function AnswerCard({ result, onDismiss, onMarkCorrect, onMarkIncorrect, 
                 },
               ]}
             >
-              <Ionicons name="checkmark" size={16} color={userFeedback === 'correct' ? '#fff' : colors.success} />
+              <AppIcon name="check" size={16} color={userFeedback === 'correct' ? '#fff' : colors.success} />
             </TouchableOpacity>
             <TouchableOpacity
               onPress={onMarkIncorrect}
@@ -113,7 +113,7 @@ export function AnswerCard({ result, onDismiss, onMarkCorrect, onMarkIncorrect, 
                 },
               ]}
             >
-              <Ionicons name="close" size={16} color={userFeedback === 'incorrect' ? '#fff' : colors.destructive} />
+              <AppIcon name="close" size={16} color={userFeedback === 'incorrect' ? '#fff' : colors.destructive} />
             </TouchableOpacity>
           </View>
         </View>

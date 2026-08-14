@@ -1,10 +1,10 @@
 import React from 'react';
 import { Platform, StyleSheet, useColorScheme, View } from 'react-native';
-import { Feather } from '@expo/vector-icons';
 import { BlurView } from 'expo-blur';
 import { Tabs } from 'expo-router';
 import { SymbolView } from 'expo-symbols';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { AppIcon } from '@/components/AppIcon';
 import { useColors } from '@/hooks/useColors';
 
 export default function TabLayout() {
@@ -53,7 +53,7 @@ export default function TabLayout() {
             isIOS ? (
               <SymbolView name="camera" tintColor={color} size={24} />
             ) : (
-              <Feather name="camera" size={22} color={color} />
+              <AppIcon name="camera" size={22} color={color} />
             ),
         }}
       />
@@ -66,7 +66,7 @@ export default function TabLayout() {
             isIOS ? (
               <SymbolView name="photo" tintColor={color} size={24} />
             ) : (
-              <Feather name="image" size={22} color={color} />
+              <AppIcon name="image" size={22} color={color} />
             ),
         }}
       />
@@ -79,7 +79,7 @@ export default function TabLayout() {
             isIOS ? (
               <SymbolView name="clock" tintColor={color} size={24} />
             ) : (
-              <Feather name="clock" size={22} color={color} />
+              <AppIcon name="clock" size={22} color={color} />
             ),
         }}
       />
@@ -92,7 +92,7 @@ export default function TabLayout() {
             isIOS ? (
               <SymbolView name="gearshape" tintColor={color} size={24} />
             ) : (
-              <Feather name="settings" size={22} color={color} />
+              <AppIcon name="settings" size={22} color={color} />
             ),
         }}
       />

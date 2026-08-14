@@ -109,6 +109,10 @@ export interface AnalysisResult extends AnalysisStageResult {
 
 let openaiClient: OpenAI | null = null;
 let openaiClientSignature = "";
+let fastVisionModelUnavailable = false;
+
+const FAST_VISION_MODEL = process.env["OPENAI_FAST_VISION_MODEL"]?.trim() || "gpt-4o-mini";
+const QUALITY_VISION_MODEL = process.env["OPENAI_QUALITY_VISION_MODEL"]?.trim() || "gpt-5.6-terra";
 
 export type AIProvider = "openai" | "replit-openai" | "unconfigured";
 
@@ -255,6 +259,7 @@ async function callOpenAI(
   imageBase64: string,
   subject: string,
   isVerification: boolean,
+  model: string,
 ): Promise<AnalysisStageResult> {
   const subjectCtx =
     subject && subject !== "General Knowledge"
@@ -266,7 +271,7 @@ async function callOpenAI(
     : `Analyze this multiple-choice question.${subjectCtx}`;
 
   const response = await getOpenAIClient().chat.completions.create({
-    model: "gpt-5.6-terra",
+    model,
     messages: [
       { role: "system", content: SYSTEM_PROMPT },
       {
@@ -283,7 +288,7 @@ async function callOpenAI(
         ],
       },
     ],
-    max_completion_tokens: 900,
+    max_completion_tokens: 600,
     response_format: {
       type: "json_schema",
       json_schema: {
@@ -314,21 +319,44 @@ export async function analyzeQuestionImage(
 ): Promise<AnalysisResult> {
   const startTime = Date.now();
 
-  // Stage 1: fast analysis
-  const stage1 = await callOpenAI(imageBase64, subject, false);
+  // Stage 1: use the lower-latency vision model for the common case. If a
+  // managed provider does not expose it, remember that and fall back cleanly.
+  const firstPassModel = fastVisionModelUnavailable ? QUALITY_VISION_MODEL : FAST_VISION_MODEL;
+  let stage1: AnalysisStageResult;
+  try {
+    stage1 = await callOpenAI(imageBase64, subject, false, firstPassModel);
+  } catch (error: unknown) {
+    const status = error && typeof error === "object" && "status" in error
+      ? Number((error as { status?: unknown }).status)
+      : 0;
+    const message = error instanceof Error ? error.message.toLowerCase() : "";
+    const unsupportedFastModel =
+      firstPassModel !== QUALITY_VISION_MODEL &&
+      (status === 400 || status === 404) &&
+      message.includes("model");
+    if (!unsupportedFastModel) throw error;
+
+    fastVisionModelUnavailable = true;
+    stage1 = await callOpenAI(imageBase64, subject, false, QUALITY_VISION_MODEL);
+  }
 
   if (!stage1.questionDetected) {
     return { ...stage1, processingTimeMs: Date.now() - startTime };
   }
 
-  const shouldVerify = stage1.needsVerification || stage1.confidence < confidenceThreshold;
+  const hasHighRiskQualifier = /\b(?:NOT|EXCEPT|BEST|MOST|LEAST|PRIMARY|FIRST|NEXT|ALWAYS|NEVER)\b/i
+    .test(stage1.question);
+  const shouldVerify =
+    stage1.needsVerification ||
+    hasHighRiskQualifier ||
+    stage1.confidence < Math.max(0.9, confidenceThreshold);
 
   if (!shouldVerify) {
     return { ...stage1, processingTimeMs: Date.now() - startTime };
   }
 
   // Stage 2: independent verification pass
-  const stage2 = await callOpenAI(imageBase64, subject, true);
+  const stage2 = await callOpenAI(imageBase64, subject, true, QUALITY_VISION_MODEL);
   const agreed = stage1.answer === stage2.answer;
 
   // If disagreement, pick the higher-confidence answer

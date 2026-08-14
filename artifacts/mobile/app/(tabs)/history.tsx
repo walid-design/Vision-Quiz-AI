@@ -9,7 +9,7 @@ import {
   Platform,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { Ionicons } from '@expo/vector-icons';
+import { AppIcon } from '@/components/AppIcon';
 import * as Haptics from 'expo-haptics';
 import { useColors } from '@/hooks/useColors';
 import { useApp } from '@/context/AppContext';
@@ -52,7 +52,7 @@ function HistoryItem({
               },
             ]}
           >
-            <Ionicons name="checkmark" size={13} color={item.userFeedback === 'correct' ? '#fff' : colors.success} />
+            <AppIcon name="check" size={13} color={item.userFeedback === 'correct' ? '#fff' : colors.success} />
           </TouchableOpacity>
           <TouchableOpacity
             onPress={() => { onFeedback(item.id, 'incorrect'); Haptics.selectionAsync(); }}
@@ -64,7 +64,7 @@ function HistoryItem({
               },
             ]}
           >
-            <Ionicons name="close" size={13} color={item.userFeedback === 'incorrect' ? '#fff' : colors.destructive} />
+            <AppIcon name="close" size={13} color={item.userFeedback === 'incorrect' ? '#fff' : colors.destructive} />
           </TouchableOpacity>
         </View>
       </View>
@@ -185,7 +185,7 @@ export default function HistoryScreen() {
         ItemSeparatorComponent={() => <View style={{ height: 10 }} />}
         ListEmptyComponent={
           <View style={styles.empty}>
-            <Ionicons name="time-outline" size={48} color={colors.mutedForeground} />
+            <AppIcon name="clock" size={48} color={colors.mutedForeground} />
             <Text style={[styles.emptyTitle, { color: colors.foreground }]}>No history yet</Text>
             <Text style={[styles.emptyText, { color: colors.mutedForeground }]}>
               Questions analyzed will appear here.

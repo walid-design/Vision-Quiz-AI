@@ -13,7 +13,7 @@ import * as ImagePicker from 'expo-image-picker';
 import * as ImageManipulator from 'expo-image-manipulator';
 import * as Haptics from 'expo-haptics';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { Ionicons } from '@expo/vector-icons';
+import { AppIcon } from '@/components/AppIcon';
 import { useColors } from '@/hooks/useColors';
 import { AnswerCard } from '@/components/AnswerCard';
 import { analyzeQuestion, toQuizAnswer } from '@/services/api';
@@ -118,7 +118,7 @@ export default function DemoScreen() {
           style={[styles.pickerBtn, { backgroundColor: colors.card, borderColor: colors.border }]}
           onPress={pickImage}
         >
-          <Ionicons name="image-outline" size={28} color={colors.primary} />
+          <AppIcon name="image" size={28} color={colors.primary} />
           <Text style={[styles.pickerBtnText, { color: colors.foreground }]}>Gallery</Text>
         </TouchableOpacity>
 
@@ -126,7 +126,7 @@ export default function DemoScreen() {
           style={[styles.pickerBtn, { backgroundColor: colors.card, borderColor: colors.border }]}
           onPress={takePhoto}
         >
-          <Ionicons name="camera-outline" size={28} color={colors.primary} />
+          <AppIcon name="camera" size={28} color={colors.primary} />
           <Text style={[styles.pickerBtnText, { color: colors.foreground }]}>Camera</Text>
         </TouchableOpacity>
       </View>
@@ -139,7 +139,7 @@ export default function DemoScreen() {
             style={[styles.clearImage, { backgroundColor: colors.destructive }]}
             onPress={() => { setImageUri(null); setImageBase64(null); setResult(null); }}
           >
-            <Ionicons name="close" size={16} color="#fff" />
+            <AppIcon name="close" size={16} color="#fff" />
           </TouchableOpacity>
         </View>
       )}
@@ -147,7 +147,7 @@ export default function DemoScreen() {
       {/* Error */}
       {!!error && (
         <View style={[styles.errorBox, { backgroundColor: `${colors.destructive}18`, borderColor: `${colors.destructive}40` }]}>
-          <Ionicons name="alert-circle-outline" size={16} color={colors.destructive} />
+          <AppIcon name="alert-circle" size={16} color={colors.destructive} />
           <Text style={[styles.errorText, { color: colors.destructive }]}>{error}</Text>
         </View>
       )}
@@ -166,7 +166,7 @@ export default function DemoScreen() {
             </>
           ) : (
             <>
-              <Ionicons name="sparkles" size={20} color="#fff" />
+              <AppIcon name="sparkles" size={20} color="#fff" />
               <Text style={styles.analyzeBtnText}>Analyze Question</Text>
             </>
           )}
@@ -197,7 +197,7 @@ export default function DemoScreen() {
       {/* Empty state */}
       {!imageUri && !result && (
         <View style={styles.emptyState}>
-          <Ionicons name="image-outline" size={48} color={colors.mutedForeground} />
+          <AppIcon name="image" size={48} color={colors.mutedForeground} />
           <Text style={[styles.emptyTitle, { color: colors.foreground }]}>No image selected</Text>
           <Text style={[styles.emptyText, { color: colors.mutedForeground }]}>
             Pick a screenshot of a multiple-choice question to see the AI in action.

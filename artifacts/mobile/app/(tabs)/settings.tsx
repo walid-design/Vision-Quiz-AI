@@ -10,7 +10,7 @@ import {
   Platform,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { Ionicons } from '@expo/vector-icons';
+import { AppIcon } from '@/components/AppIcon';
 import { useColors } from '@/hooks/useColors';
 import { useApp } from '@/context/AppContext';
 import { SUBJECTS } from '@/types';
@@ -46,7 +46,7 @@ function StepperRow({
           accessibilityRole="button"
           accessibilityLabel={`Decrease ${label}`}
         >
-          <Ionicons name="remove" size={18} color={colors.foreground} />
+          <AppIcon name="minus" size={18} color={colors.foreground} />
         </TouchableOpacity>
         <Text style={[styles.stepValue, { color: colors.primary }]}>{display}</Text>
         <TouchableOpacity
@@ -55,7 +55,7 @@ function StepperRow({
           accessibilityRole="button"
           accessibilityLabel={`Increase ${label}`}
         >
-          <Ionicons name="add" size={18} color={colors.foreground} />
+          <AppIcon name="plus" size={18} color={colors.foreground} />
         </TouchableOpacity>
       </View>
     </View>
@@ -218,7 +218,7 @@ export default function SettingsScreen() {
         accessibilityRole="button"
         accessibilityLabel="Reset settings to defaults"
       >
-        <Ionicons name="refresh-outline" size={18} color={colors.mutedForeground} />
+        <AppIcon name="refresh" size={18} color={colors.mutedForeground} />
         <Text style={[styles.resetText, { color: colors.mutedForeground }]}>Reset to Defaults</Text>
       </TouchableOpacity>
     </ScrollView>

@@ -12,11 +12,11 @@ import {
 import { CameraView, useCameraPermissions } from 'expo-camera';
 import * as ImageManipulator from 'expo-image-manipulator';
 import { LinearGradient } from 'expo-linear-gradient';
-import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
 import { useFocusEffect, useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { AnswerCard } from '@/components/AnswerCard';
+import { AppIcon } from '@/components/AppIcon';
 import { StatusIndicator } from '@/components/StatusIndicator';
 import { useApp } from '@/context/AppContext';
 import {
@@ -31,12 +31,16 @@ import {
 import { type AppStatus } from '@/types';
 
 const INITIAL_SCAN_DELAY_MS = 500;
-const REQUIRED_STABLE_SAMPLES = 2;
-const INITIAL_ANALYSIS_DEADLINE_MS = 2_400;
+const REQUIRED_STABLE_SAMPLES = 1;
+const VISUAL_CHANGE_CONFIRM_SAMPLES = 2;
+const INITIAL_ANALYSIS_DEADLINE_MS = 1_600;
 const CHANGE_SETTLE_DEADLINE_MS = 3_000;
 const NO_QUESTION_RETRY_MS = 6_000;
 const TRANSIENT_ERROR_RETRY_MS = 4_000;
-const MIN_REANALYSIS_GAP_MS = 5_000;
+const MIN_REANALYSIS_GAP_MS = 3_500;
+const AUTO_RECHECK_INITIAL_MS = 5_000;
+const AUTO_RECHECK_STEP_MS = 2_000;
+const AUTO_RECHECK_MAX_MS = 12_000;
 
 type ServiceState = 'checking' | 'ready' | 'setup-required' | 'unreachable';
 
@@ -71,6 +75,9 @@ export default function LiveAssistScreen() {
   const hasSubmittedFrameRef = useRef(false);
   const stabilizationStartedAtRef = useRef(Date.now());
   const nextAnalysisAllowedAtRef = useRef(0);
+  const autoRecheckAtRef = useRef(0);
+  const sameQuestionProbeCountRef = useRef(0);
+  const visualChangeSamplesRef = useRef(0);
   const forceAnalyzeRef = useRef(false);
   const cycleInFlightRef = useRef(false);
   const analysisInFlightRef = useRef(false);
@@ -96,6 +103,7 @@ export default function LiveAssistScreen() {
     previousSignatureRef.current = null;
     pendingChangeRef.current = false;
     stableSamplesRef.current = 0;
+    visualChangeSamplesRef.current = 0;
     forceAnalyzeRef.current = false;
     if (updateUi && mountedRef.current) {
       setRunning(false);
@@ -199,26 +207,37 @@ export default function LiveAssistScreen() {
       if (!result.questionDetected) {
         hasSubmittedFrameRef.current = false;
         nextAnalysisAllowedAtRef.current = Date.now() + NO_QUESTION_RETRY_MS;
+        autoRecheckAtRef.current = 0;
         setStatus('WATCHING');
         setGuidance(result.captureGuidance || 'Move closer and include every answer choice.');
         return;
       }
 
       hasSubmittedFrameRef.current = true;
-      nextAnalysisAllowedAtRef.current = Date.now() + MIN_REANALYSIS_GAP_MS;
+      const completedAt = Date.now();
+      nextAnalysisAllowedAtRef.current = completedAt + MIN_REANALYSIS_GAP_MS;
       const questionKey = `${result.question}|${Object.values(result.options).join('|')}`
         .toLocaleLowerCase()
-        .replace(/\s+/g, ' ')
+        .replace(/[^a-z0-9]+/g, ' ')
         .trim();
-      if (questionKey !== lastQuestionKeyRef.current) {
+      const isNewQuestion = questionKey !== lastQuestionKeyRef.current;
+      if (isNewQuestion) {
         const quizAnswer = toQuizAnswer(result, activeSubject);
         lastQuestionKeyRef.current = questionKey;
+        sameQuestionProbeCountRef.current = 0;
         addToHistory(quizAnswer);
         setCurrentResult(quizAnswer);
         if (settings.hapticAlerts) {
           void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
         }
+      } else {
+        sameQuestionProbeCountRef.current += 1;
       }
+
+      autoRecheckAtRef.current = completedAt + Math.min(
+        AUTO_RECHECK_MAX_MS,
+        AUTO_RECHECK_INITIAL_MS + sameQuestionProbeCountRef.current * AUTO_RECHECK_STEP_MS,
+      );
 
       setError(null);
       setStatus('ANSWER_READY');
@@ -247,6 +266,7 @@ export default function LiveAssistScreen() {
       setGuidance('Live Assist will retry automatically…');
       pendingChangeRef.current = hasSubmittedFrameRef.current;
       stableSamplesRef.current = 0;
+      visualChangeSamplesRef.current = 0;
       stabilizationStartedAtRef.current = Date.now();
       nextAnalysisAllowedAtRef.current = Date.now() + TRANSIENT_ERROR_RETRY_MS;
       setStatus('WATCHING');
@@ -279,9 +299,29 @@ export default function LiveAssistScreen() {
       const previous = previousSignatureRef.current;
       previousSignatureRef.current = signature;
       const now = Date.now();
+      const canAnalyze = now >= nextAnalysisAllowedAtRef.current;
 
       if (forceAnalyzeRef.current && now >= nextAnalysisAllowedAtRef.current) {
         forceAnalyzeRef.current = false;
+        await captureAndAnalyze(runId, signature);
+        return;
+      }
+
+      // Never depend entirely on visual heuristics. The first question starts
+      // automatically, and answered screens are periodically rechecked with an
+      // adaptive backoff so text-only changes cannot require a manual tap.
+      const initialAnalysisDue =
+        !hasSubmittedFrameRef.current &&
+        canAnalyze &&
+        now - stabilizationStartedAtRef.current >= INITIAL_ANALYSIS_DEADLINE_MS;
+      const automaticRecheckDue =
+        hasSubmittedFrameRef.current &&
+        canAnalyze &&
+        autoRecheckAtRef.current > 0 &&
+        now >= autoRecheckAtRef.current;
+
+      if (initialAnalysisDue || automaticRecheckDue) {
+        setGuidance(initialAnalysisDue ? 'Reading the visible question…' : 'Checking for the next question…');
         await captureAndAnalyze(runId, signature);
         return;
       }
@@ -302,12 +342,11 @@ export default function LiveAssistScreen() {
           : 0;
         // The setting is expressed as sensitivity: a higher value lowers the
         // visual-difference threshold and reacts to smaller screen changes.
-        const changeThreshold = Math.max(0.018, 0.1 - settings.changeSensitivity * 0.45);
+        const changeThreshold = Math.max(0.018, 0.033 - settings.changeSensitivity * 0.06);
         // Camera noise and monitor refresh patterns can exceed very small
         // thresholds even when the phone is still, so allow a practical floor.
-        const stableThreshold = Math.max(0.016, Math.min(0.035, changeThreshold * 0.48));
+        const stableThreshold = Math.max(0.011, Math.min(0.015, changeThreshold * 0.55));
         const isStable = score <= stableThreshold;
-        const canAnalyze = now >= nextAnalysisAllowedAtRef.current;
 
         if (settings.debugMode) {
           setDebugInfo(
@@ -315,13 +354,18 @@ export default function LiveAssistScreen() {
           );
         }
 
+        visualChangeSamplesRef.current = referenceScore >= changeThreshold
+          ? visualChangeSamplesRef.current + 1
+          : 0;
+
         if (
           hasSubmittedFrameRef.current &&
           !pendingChangeRef.current &&
-          referenceScore >= changeThreshold
+          visualChangeSamplesRef.current >= VISUAL_CHANGE_CONFIRM_SAMPLES
         ) {
           pendingChangeRef.current = true;
           stableSamplesRef.current = 0;
+          visualChangeSamplesRef.current = 0;
           stabilizationStartedAtRef.current = now;
           setStatus('CHANGE_DETECTED');
           setGuidance('New content detected · Hold steady');
@@ -377,8 +421,13 @@ export default function LiveAssistScreen() {
     runIdRef.current = runId;
     activeRef.current = true;
     previousSignatureRef.current = null;
+    submittedSignatureRef.current = null;
+    hasSubmittedFrameRef.current = false;
     pendingChangeRef.current = false;
     stableSamplesRef.current = 0;
+    visualChangeSamplesRef.current = 0;
+    autoRecheckAtRef.current = 0;
+    sameQuestionProbeCountRef.current = 0;
     stabilizationStartedAtRef.current = Date.now();
     nextAnalysisAllowedAtRef.current = 0;
     setRunning(true);
@@ -468,7 +517,7 @@ export default function LiveAssistScreen() {
       <View style={styles.permissionRoot}>
         <LinearGradient colors={['#080812', '#10152a']} style={StyleSheet.absoluteFill} />
         <View style={styles.permissionIcon}>
-          <Ionicons name="scan" size={34} color="#38bdf8" />
+          <AppIcon name="scan" size={34} color="#38bdf8" />
         </View>
         <Text style={styles.permissionTitle}>Turn on Live Assist</Text>
         <Text style={styles.permissionBody}>
@@ -482,7 +531,7 @@ export default function LiveAssistScreen() {
             accessibilityRole="button"
             accessibilityLabel="Allow camera access"
           >
-            <Ionicons name="camera" size={20} color="#fff" />
+            <AppIcon name="camera" size={20} color="#fff" />
             <Text style={styles.permissionButtonText}>Allow Camera Access</Text>
           </TouchableOpacity>
         ) : (
@@ -529,7 +578,7 @@ export default function LiveAssistScreen() {
             accessibilityRole="button"
             accessibilityLabel="Open answer history"
           >
-            <Ionicons name="time-outline" size={21} color="#fff" />
+            <AppIcon name="clock" size={21} color="#fff" />
           </TouchableOpacity>
           <TouchableOpacity
             style={styles.headerButton}
@@ -537,7 +586,7 @@ export default function LiveAssistScreen() {
             accessibilityRole="button"
             accessibilityLabel="Open Live Assist settings"
           >
-            <Ionicons name="settings-outline" size={21} color="#fff" />
+            <AppIcon name="settings" size={21} color="#fff" />
           </TouchableOpacity>
         </View>
       </View>
@@ -549,10 +598,10 @@ export default function LiveAssistScreen() {
 
       {!!error && (
         <View style={[styles.errorBanner, { top: insets.top + 146 }]}>
-          <Ionicons name="warning-outline" size={16} color="#fecaca" />
+          <AppIcon name="warning" size={16} color="#fecaca" />
           <Text style={styles.errorText} numberOfLines={2}>{error}</Text>
           <TouchableOpacity onPress={() => setError(null)} hitSlop={8}>
-            <Ionicons name="close" size={16} color="#fff" />
+            <AppIcon name="close" size={16} color="#fff" />
           </TouchableOpacity>
         </View>
       )}
@@ -589,7 +638,7 @@ export default function LiveAssistScreen() {
               {serviceState === 'checking' ? (
                 <ActivityIndicator color="#38bdf8" size="small" />
               ) : (
-                <Ionicons name="sparkles-outline" size={21} color="#38bdf8" />
+                <AppIcon name="sparkles" size={21} color="#38bdf8" />
               )}
             </View>
             <View style={styles.setupText}>
@@ -605,7 +654,7 @@ export default function LiveAssistScreen() {
                 accessibilityRole="button"
                 accessibilityLabel="Check AI connection again"
               >
-                <Ionicons name="refresh" size={18} color="#fff" />
+                <AppIcon name="refresh" size={18} color="#fff" />
                 <Text style={styles.retryText}>Check</Text>
               </TouchableOpacity>
             )}
@@ -618,10 +667,10 @@ export default function LiveAssistScreen() {
                 onPress={requestImmediateAnalysis}
                 activeOpacity={0.84}
                 accessibilityRole="button"
-                accessibilityLabel="Analyze the visible question now"
+                accessibilityLabel="Check the visible question now"
               >
-                <Ionicons name="scan-outline" size={17} color="#fff" />
-                <Text style={styles.analyzeNowText}>Analyze now</Text>
+                <AppIcon name="scan" size={17} color="#bae6fd" />
+                <Text style={styles.analyzeNowText}>Check now</Text>
               </TouchableOpacity>
             )}
             <View style={styles.controlBar}>
@@ -644,7 +693,7 @@ export default function LiveAssistScreen() {
                 accessibilityRole="button"
                 accessibilityLabel={running ? 'Pause Live Assist' : 'Resume Live Assist'}
               >
-                <Ionicons name={running ? 'pause' : 'play'} size={19} color="#fff" />
+                <AppIcon name={running ? 'pause' : 'play'} size={19} color="#fff" />
                 <Text style={styles.pauseText}>{running ? 'Pause' : 'Resume'}</Text>
               </TouchableOpacity>
             </View>
@@ -701,8 +750,8 @@ const styles = StyleSheet.create({
   setupMessage: { color: '#9aa8cc', fontSize: 11, lineHeight: 16, marginTop: 4, fontFamily: 'Inter_400Regular' },
   retryButton: { minWidth: 62, height: 40, paddingHorizontal: 10, borderRadius: 20, backgroundColor: '#0ea5e9', flexDirection: 'row', gap: 5, alignItems: 'center', justifyContent: 'center' },
   retryText: { color: '#fff', fontSize: 11, fontFamily: 'Inter_600SemiBold' },
-  analyzeNowButton: { alignSelf: 'flex-end', height: 40, borderRadius: 20, paddingHorizontal: 14, backgroundColor: 'rgba(14,165,233,0.9)', borderWidth: 1, borderColor: 'rgba(125,211,252,0.7)', flexDirection: 'row', alignItems: 'center', gap: 7 },
-  analyzeNowText: { color: '#fff', fontSize: 12, fontFamily: 'Inter_600SemiBold' },
+  analyzeNowButton: { alignSelf: 'flex-end', height: 38, borderRadius: 19, paddingHorizontal: 13, backgroundColor: 'rgba(7,10,23,0.82)', borderWidth: 1, borderColor: 'rgba(125,211,252,0.45)', flexDirection: 'row', alignItems: 'center', gap: 7 },
+  analyzeNowText: { color: '#bae6fd', fontSize: 12, fontFamily: 'Inter_600SemiBold' },
   controlBar: { minHeight: 72, paddingHorizontal: 14, paddingVertical: 10, borderRadius: 22, backgroundColor: 'rgba(7,10,23,0.9)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.13)', flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 10 },
   controlText: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: 10 },
   controlCopy: { flex: 1, minWidth: 0 },
