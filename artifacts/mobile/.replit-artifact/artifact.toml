@@ -1,0 +1,24 @@
+kind = "mobile"
+previewPath = "/"
+title = "VisionQuiz AI"
+description = "A native mobile app that uses the phone's rear camera to detect and analyze multiple-choice questions displayed on a computer screen. It sends cropped question images to a secure backend powered by OpenAI vision, and displays the best answer with confidence score — designed for live quiz sessions and demo mode with image picker."
+version = "1.0.0"
+id = "artifacts/mobile"
+router = "expo-domain"
+
+[[services]]
+name = "expo"
+ensurePreviewReachable = "/status"
+paths = [ "/" ]
+localPort = 18115
+
+[services.development]
+run = "pnpm --filter @workspace/mobile run dev"
+
+[services.production]
+build = [ "pnpm", "--filter", "@workspace/mobile", "run", "build" ]
+run = [ "pnpm", "--filter", "@workspace/mobile", "run", "serve" ]
+
+[services.env]
+PORT = "18115"
+BASE_PATH = "/"

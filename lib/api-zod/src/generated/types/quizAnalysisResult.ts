@@ -5,23 +5,7 @@
  * API specification
  * OpenAPI spec version: 0.1.0
  */
-export interface HealthStatus {
-  status: string;
-}
-
-export interface AnalyzeQuestionRequest {
-  /** Base64-encoded image of the question (PNG or JPEG) */
-  imageBase64: string;
-  /** Certification or subject context (e.g. "AWS Solutions Architect") */
-  subject: string;
-  /** Optional session identifier */
-  sessionId?: string;
-}
-
-/**
- * Map of option letter to option text (e.g. A, B, C, D)
- */
-export type QuizAnalysisResultOptions = {[key: string]: string};
+import type { QuizAnalysisResultOptions } from './quizAnalysisResultOptions';
 
 export interface QuizAnalysisResult {
   /** Detected question text */
@@ -45,9 +29,3 @@ export interface QuizAnalysisResult {
   /** Total processing time in milliseconds */
   processingTimeMs?: number;
 }
-
-export interface ErrorResponse {
-  error: string;
-  message: string;
-}
-

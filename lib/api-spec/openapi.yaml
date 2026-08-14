@@ -10,6 +10,8 @@ servers:
 tags:
   - name: health
     description: Health operations
+  - name: quiz
+    description: Quiz question analysis
 paths:
   /healthz:
     get:
@@ -24,6 +26,38 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/HealthStatus"
+
+  /analyze-question:
+    post:
+      operationId: analyzeQuestion
+      tags: [quiz]
+      summary: Analyze a multiple-choice question image using AI
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AnalyzeQuestionRequest"
+      responses:
+        "200":
+          description: Analysis result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/QuizAnalysisResult"
+        "400":
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: Server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
 components:
   schemas:
     HealthStatus:
@@ -34,3 +68,73 @@ components:
       required:
         - status
 
+    AnalyzeQuestionRequest:
+      type: object
+      properties:
+        imageBase64:
+          type: string
+          description: Base64-encoded image of the question (PNG or JPEG)
+        subject:
+          type: string
+          description: Certification or subject context (e.g. "AWS Solutions Architect")
+        sessionId:
+          type: string
+          description: Optional session identifier
+      required:
+        - imageBase64
+        - subject
+
+    QuizAnalysisResult:
+      type: object
+      properties:
+        question:
+          type: string
+          description: Detected question text
+        options:
+          type: object
+          additionalProperties:
+            type: string
+          description: Map of option letter to option text (e.g. A, B, C, D)
+        answer:
+          type: string
+          description: Best answer letter (e.g. "B")
+        answerText:
+          type: string
+          description: Full text of the selected answer
+        confidence:
+          type: number
+          description: Confidence score 0-1
+        explanation:
+          type: string
+          description: Brief explanation of the answer
+        needsVerification:
+          type: boolean
+          description: Whether a second verification pass was triggered
+        verified:
+          type: boolean
+          description: Whether first and second analysis agreed
+        verifierAnswer:
+          type: string
+          description: Answer from the verification pass (if used)
+        processingTimeMs:
+          type: number
+          description: Total processing time in milliseconds
+      required:
+        - question
+        - options
+        - answer
+        - answerText
+        - confidence
+        - explanation
+        - needsVerification
+
+    ErrorResponse:
+      type: object
+      properties:
+        error:
+          type: string
+        message:
+          type: string
+      required:
+        - error
+        - message
