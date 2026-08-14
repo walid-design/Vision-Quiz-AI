@@ -1,21 +1,21 @@
 import React from 'react';
-import { View, Text, StyleSheet } from 'react-native';
-import { AppStatus } from '@/types';
+import { StyleSheet, Text, View } from 'react-native';
 import { useColors } from '@/hooks/useColors';
+import { type AppStatus } from '@/types';
 
 interface Props {
   status: AppStatus;
 }
 
 const STATUS_CONFIG: Record<AppStatus, { label: string; colorKey: 'success' | 'primary' | 'warning' | 'accent' | 'mutedForeground' | 'destructive' }> = {
-  IDLE: { label: 'Ready', colorKey: 'mutedForeground' },
-  WATCHING: { label: 'Watching', colorKey: 'success' },
-  CHANGE_DETECTED: { label: 'Change Detected', colorKey: 'warning' },
-  STABILIZING: { label: 'Stabilizing…', colorKey: 'warning' },
-  CAPTURING: { label: 'Capturing', colorKey: 'primary' },
-  ANALYZING: { label: 'Analyzing', colorKey: 'accent' },
+  IDLE: { label: 'Paused', colorKey: 'mutedForeground' },
+  WATCHING: { label: 'Live', colorKey: 'success' },
+  CHANGE_DETECTED: { label: 'New question', colorKey: 'warning' },
+  STABILIZING: { label: 'Hold steady', colorKey: 'warning' },
+  CAPTURING: { label: 'Reading', colorKey: 'primary' },
+  ANALYZING: { label: 'Solving', colorKey: 'accent' },
   VERIFYING: { label: 'Verifying', colorKey: 'accent' },
-  ANSWER_READY: { label: 'Answer Ready', colorKey: 'success' },
+  ANSWER_READY: { label: 'Answer ready', colorKey: 'success' },
 };
 
 export function StatusIndicator({ status }: Props) {
@@ -26,7 +26,7 @@ export function StatusIndicator({ status }: Props) {
   return (
     <View style={styles.container}>
       <View style={[styles.dot, { backgroundColor: dotColor }]} />
-      <Text style={[styles.label, { color: colors.foreground }]}>{config.label}</Text>
+      <Text style={styles.label}>{config.label}</Text>
     </View>
   );
 }
@@ -39,16 +39,10 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     paddingVertical: 6,
     borderRadius: 20,
-    backgroundColor: 'rgba(0,0,0,0.45)',
+    backgroundColor: 'rgba(7,10,23,0.78)',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.14)',
   },
-  dot: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
-  },
-  label: {
-    fontSize: 13,
-    fontFamily: 'Inter_500Medium',
-    letterSpacing: 0.2,
-  },
+  dot: { width: 8, height: 8, borderRadius: 4 },
+  label: { color: '#fff', fontSize: 13, fontFamily: 'Inter_500Medium', letterSpacing: 0.2 },
 });

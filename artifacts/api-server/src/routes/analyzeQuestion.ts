@@ -4,10 +4,12 @@ import { analyzeQuestionImage } from "../services/openaiService.js";
 const router = Router();
 
 router.post("/analyze-question", async (req, res) => {
-  const { imageBase64, subject, sessionId } = req.body as {
+  const body = req.body && typeof req.body === "object" ? req.body : {};
+  const { imageBase64, subject, sessionId, confidenceThreshold } = body as {
     imageBase64?: unknown;
     subject?: unknown;
     sessionId?: unknown;
+    confidenceThreshold?: unknown;
   };
 
   if (!imageBase64 || typeof imageBase64 !== "string" || imageBase64.trim() === "") {
@@ -17,6 +19,17 @@ router.post("/analyze-question", async (req, res) => {
 
   if (!subject || typeof subject !== "string" || subject.trim() === "") {
     res.status(400).json({ error: "BAD_REQUEST", message: "subject is required" });
+    return;
+  }
+
+  if (subject.trim().length > 120) {
+    res.status(400).json({ error: "BAD_REQUEST", message: "subject must be 120 characters or fewer" });
+    return;
+  }
+
+  const threshold = confidenceThreshold === undefined ? 0.85 : Number(confidenceThreshold);
+  if (!Number.isFinite(threshold) || threshold < 0.5 || threshold > 0.99) {
+    res.status(400).json({ error: "BAD_REQUEST", message: "confidenceThreshold must be between 0.5 and 0.99" });
     return;
   }
 
@@ -35,12 +48,14 @@ router.post("/analyze-question", async (req, res) => {
   }
 
   try {
-    const result = await analyzeQuestionImage(imageBase64, subject.trim());
+    const result = await analyzeQuestionImage(imageBase64, subject.trim(), threshold);
     res.json(result);
   } catch (err: unknown) {
     req.log.error({ err, sessionId }, "Failed to analyze question");
-    const message = err instanceof Error ? err.message : "Analysis failed";
-    res.status(500).json({ error: "ANALYSIS_ERROR", message });
+    res.status(500).json({
+      error: "ANALYSIS_ERROR",
+      message: "The question could not be analyzed right now. Please try again.",
+    });
   }
 });
 

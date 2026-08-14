@@ -82,7 +82,11 @@ export default function DemoScreen() {
       const activeSubject = settings.subject === 'Custom'
         ? settings.customSubject || 'General Knowledge'
         : settings.subject;
-      const res = await analyzeQuestion(imageBase64, activeSubject);
+      const res = await analyzeQuestion(imageBase64, activeSubject, settings.confidenceThreshold);
+      if (!res.questionDetected) {
+        setError(res.captureGuidance || 'Make sure the full question and all answer choices are visible.');
+        return;
+      }
       const quizAnswer = toQuizAnswer(res, activeSubject);
       addToHistory(quizAnswer);
       setResult(quizAnswer);
@@ -99,7 +103,7 @@ export default function DemoScreen() {
   return (
     <ScrollView
       style={[styles.root, { backgroundColor: colors.background }]}
-      contentContainerStyle={[styles.content, { paddingTop: topInset + 16, paddingBottom: insets.bottom + 24 }]}
+      contentContainerStyle={[styles.content, { paddingTop: topInset + 16, paddingBottom: insets.bottom + 110 }]}
       showsVerticalScrollIndicator={false}
     >
       {/* Header */}

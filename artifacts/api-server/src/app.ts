@@ -26,9 +26,30 @@ app.use(
   }),
 );
 app.use(cors());
-app.use(express.json());
+// Camera images are sent as base64 JSON. Keep this slightly above the route's
+// validated 5 MB base64 ceiling so oversized requests receive a clear response.
+app.use(express.json({ limit: "7mb" }));
 app.use(express.urlencoded({ extended: true }));
 
 app.use("/api", router);
+
+app.use((err: unknown, req: express.Request, res: express.Response, next: express.NextFunction) => {
+  if (res.headersSent) {
+    next(err);
+    return;
+  }
+
+  const bodyError = err as { type?: string; status?: number };
+  if (bodyError.type === "entity.too.large" || bodyError.status === 413) {
+    res.status(413).json({
+      error: "PAYLOAD_TOO_LARGE",
+      message: "The camera image is too large. Move closer to the question and try again.",
+    });
+    return;
+  }
+
+  req.log.error({ err }, "Unhandled API error");
+  res.status(500).json({ error: "INTERNAL_ERROR", message: "Something went wrong while processing the request." });
+});
 
 export default app;

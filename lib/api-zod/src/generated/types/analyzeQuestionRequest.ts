@@ -13,4 +13,10 @@ export interface AnalyzeQuestionRequest {
   subject: string;
   /** Optional session identifier */
   sessionId?: string;
+  /**
+     * Trigger an independent verification pass below this confidence
+     * @minimum 0.5
+     * @maximum 0.99
+     */
+  confidenceThreshold?: number;
 }

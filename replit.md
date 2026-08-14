@@ -1,45 +1,41 @@
-# [Project name]
+# VisionQuiz AI
 
-_Replace the heading above with the project's name, and this line with one sentence describing what this app does for users._
+VisionQuiz AI is an Expo mobile assistant that watches an external screen through the camera, automatically detects stable multiple-choice questions, and displays AI-generated answers without a manual capture workflow.
 
-## Run & Operate
+## Run and operate
 
-- `pnpm --filter @workspace/api-server run dev` — run the API server (port 5000)
-- `pnpm run typecheck` — full typecheck across all packages
-- `pnpm run build` — typecheck + build all packages
-- `pnpm --filter @workspace/api-spec run codegen` — regenerate API hooks and Zod schemas from the OpenAPI spec
-- `pnpm --filter @workspace/db run push` — push DB schema changes (dev only)
-- Required env: `DATABASE_URL` — Postgres connection string
+- `pnpm --filter @workspace/api-server run dev` — build and run the API server.
+- `pnpm --filter @workspace/mobile run dev` — run the Expo development experience on Replit.
+- `pnpm run typecheck` — validate all TypeScript projects.
+- `pnpm --filter @workspace/api-server run build` — build the production API bundle.
+- `pnpm --filter @workspace/api-spec run codegen` — regenerate the API client and Zod contracts.
 
-## Stack
+Required environment variables:
 
-- pnpm workspaces, Node.js 24, TypeScript 5.9
-- API: Express 5
-- DB: PostgreSQL + Drizzle ORM
-- Validation: Zod (`zod/v4`), `drizzle-zod`
-- API codegen: Orval (from OpenAPI spec)
-- Build: esbuild (CJS bundle)
+- `PORT` — API or preview server port.
+- `OPENAI_API_KEY` — server-side key used for vision analysis.
+- `EXPO_PUBLIC_DOMAIN` — public API host embedded in the mobile bundle.
 
-## Where things live
+## Architecture
 
-_Populate as you build — short repo map plus pointers to the source-of-truth file for DB schema, API contracts, theme files, etc._
+- `artifacts/mobile` — Expo Router/React Native application and Live Assist camera workflow.
+- `artifacts/api-server` — Express API and OpenAI vision analysis service.
+- `lib/api-spec` — source OpenAPI contract.
+- `lib/api-client-react` and `lib/api-zod` — generated client and validation types.
+- `artifacts/mockup-sandbox` — independent web design mockup; it is not the live camera product.
 
-## Architecture decisions
+## Live Assist flow
 
-_Populate as you build — non-obvious choices a reader couldn't infer from the code (3-5 bullets)._
+1. Decode tiny monitoring frames into luminance signatures locally.
+2. Wait for a stable initial question or a stable visual change.
+3. Automatically prepare a readable full-frame image.
+4. Ask the vision service to locate and extract one complete multiple-choice question.
+5. Display the answer while monitoring continues for the next question.
 
-## Product
+Incomplete, cut-off, or unreadable questions return camera guidance rather than a guessed answer. The app stores up to 200 answer records locally in AsyncStorage.
 
-_Describe the high-level user-facing capabilities of this app once they exist._
+## Notes
 
-## User preferences
-
-_Populate as you build — explicit user instructions worth remembering across sessions._
-
-## Gotchas
-
-_Populate as you build — sharp edges, "always run X before Y" rules._
-
-## Pointers
-
-- See the `pnpm-workspace` skill for workspace structure, TypeScript setup, and package details
+- The production experience uses the rear camera to view another screen; it does not capture the device's own screen.
+- The live screen intentionally hides the tab bar and provides safe-area-aware History, Settings, and Pause controls.
+- PostgreSQL scaffolding exists in the workspace but is not used by the current application.

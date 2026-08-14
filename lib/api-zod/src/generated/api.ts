@@ -20,13 +20,21 @@ export const HealthCheckResponse = zod.object({
 /**
  * @summary Analyze a multiple-choice question image using AI
  */
+export const analyzeQuestionBodyConfidenceThresholdMin = 0.5;
+export const analyzeQuestionBodyConfidenceThresholdMax = 0.99;
+
+
+
 export const AnalyzeQuestionBody = zod.object({
   "imageBase64": zod.string().describe('Base64-encoded image of the question (PNG or JPEG)'),
   "subject": zod.string().describe('Certification or subject context (e.g. \"AWS Solutions Architect\")'),
-  "sessionId": zod.string().optional().describe('Optional session identifier')
+  "sessionId": zod.string().optional().describe('Optional session identifier'),
+  "confidenceThreshold": zod.number().min(analyzeQuestionBodyConfidenceThresholdMin).max(analyzeQuestionBodyConfidenceThresholdMax).optional().describe('Trigger an independent verification pass below this confidence')
 })
 
 export const AnalyzeQuestionResponse = zod.object({
+  "questionDetected": zod.boolean().describe('Whether a complete multiple-choice question and its choices were visible'),
+  "captureGuidance": zod.string().describe('Short camera guidance when a complete question was not detected'),
   "question": zod.string().describe('Detected question text'),
   "options": zod.record(zod.string(), zod.string()).describe('Map of option letter to option text (e.g. A, B, C, D)'),
   "answer": zod.string().describe('Best answer letter (e.g. \"B\")'),
@@ -36,7 +44,8 @@ export const AnalyzeQuestionResponse = zod.object({
   "needsVerification": zod.boolean().describe('Whether a second verification pass was triggered'),
   "verified": zod.boolean().optional().describe('Whether first and second analysis agreed'),
   "verifierAnswer": zod.string().optional().describe('Answer from the verification pass (if used)'),
-  "processingTimeMs": zod.number().optional().describe('Total processing time in milliseconds')
+  "firstPassAnswer": zod.string().optional().describe('Answer from the first analysis pass (if verification was used)'),
+  "processingTimeMs": zod.number().describe('Total processing time in milliseconds')
 })
 
 

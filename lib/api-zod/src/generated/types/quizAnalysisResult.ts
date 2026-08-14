@@ -8,6 +8,10 @@
 import type { QuizAnalysisResultOptions } from './quizAnalysisResultOptions';
 
 export interface QuizAnalysisResult {
+  /** Whether a complete multiple-choice question and its choices were visible */
+  questionDetected: boolean;
+  /** Short camera guidance when a complete question was not detected */
+  captureGuidance: string;
   /** Detected question text */
   question: string;
   /** Map of option letter to option text (e.g. A, B, C, D) */
@@ -26,6 +30,8 @@ export interface QuizAnalysisResult {
   verified?: boolean;
   /** Answer from the verification pass (if used) */
   verifierAnswer?: string;
+  /** Answer from the first analysis pass (if verification was used) */
+  firstPassAnswer?: string;
   /** Total processing time in milliseconds */
-  processingTimeMs?: number;
+  processingTimeMs: number;
 }

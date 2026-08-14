@@ -43,6 +43,8 @@ function StepperRow({
         <TouchableOpacity
           style={[styles.stepBtn, { backgroundColor: colors.secondary, borderColor: colors.border }]}
           onPress={onDecrement}
+          accessibilityRole="button"
+          accessibilityLabel={`Decrease ${label}`}
         >
           <Ionicons name="remove" size={18} color={colors.foreground} />
         </TouchableOpacity>
@@ -50,6 +52,8 @@ function StepperRow({
         <TouchableOpacity
           style={[styles.stepBtn, { backgroundColor: colors.secondary, borderColor: colors.border }]}
           onPress={onIncrement}
+          accessibilityRole="button"
+          accessibilityLabel={`Increase ${label}`}
         >
           <Ionicons name="add" size={18} color={colors.foreground} />
         </TouchableOpacity>
@@ -69,10 +73,38 @@ export default function SettingsScreen() {
   return (
     <ScrollView
       style={[styles.root, { backgroundColor: colors.background }]}
-      contentContainerStyle={[styles.content, { paddingTop: topInset + 16, paddingBottom: insets.bottom + 40 }]}
+      contentContainerStyle={[styles.content, { paddingTop: topInset + 16, paddingBottom: insets.bottom + 110 }]}
       showsVerticalScrollIndicator={false}
     >
       <Text style={[styles.title, { color: colors.foreground }]}>Settings</Text>
+
+      <Section title="Live Assist" colors={colors}>
+        <View style={styles.toggleRow}>
+          <View style={{ flex: 1, gap: 2 }}>
+            <Text style={[styles.rowLabel, { color: colors.foreground }]}>Start Automatically</Text>
+            <Text style={[styles.rowDesc, { color: colors.mutedForeground }]}>Begin watching as soon as Live Assist opens</Text>
+          </View>
+          <Switch
+            value={settings.autoStart}
+            onValueChange={(value) => updateSettings({ autoStart: value })}
+            trackColor={{ false: colors.muted, true: colors.primary }}
+            thumbColor={settings.autoStart ? colors.primaryForeground : colors.mutedForeground}
+          />
+        </View>
+        <View style={[styles.divider, { backgroundColor: colors.border }]} />
+        <View style={styles.toggleRow}>
+          <View style={{ flex: 1, gap: 2 }}>
+            <Text style={[styles.rowLabel, { color: colors.foreground }]}>Answer Alerts</Text>
+            <Text style={[styles.rowDesc, { color: colors.mutedForeground }]}>Vibrate gently when a new answer is ready</Text>
+          </View>
+          <Switch
+            value={settings.hapticAlerts}
+            onValueChange={(value) => updateSettings({ hapticAlerts: value })}
+            trackColor={{ false: colors.muted, true: colors.primary }}
+            thumbColor={settings.hapticAlerts ? colors.primaryForeground : colors.mutedForeground}
+          />
+        </View>
+      </Section>
 
       {/* Subject Section */}
       <Section title="Subject / Certification" colors={colors}>
@@ -88,6 +120,8 @@ export default function SettingsScreen() {
                 },
               ]}
               onPress={() => updateSettings({ subject: s })}
+              accessibilityRole="button"
+              accessibilityState={{ selected: settings.subject === s }}
             >
               <Text
                 style={[
@@ -120,7 +154,7 @@ export default function SettingsScreen() {
       <Section title="Detection" colors={colors}>
         <StepperRow
           label="Confidence Threshold"
-          description="Trigger verification below this confidence level"
+          description="Double-check answers below this confidence level"
           value={settings.confidenceThreshold}
           display={`${Math.round(settings.confidenceThreshold * 100)}%`}
           onDecrement={() => updateSettings({ confidenceThreshold: clamp(settings.confidenceThreshold - 0.05, 0.5, 0.99) })}
@@ -130,7 +164,7 @@ export default function SettingsScreen() {
         <View style={[styles.divider, { backgroundColor: colors.border }]} />
         <StepperRow
           label="Change Sensitivity"
-          description="Higher = more sensitive to screen changes (0–100%)"
+          description="Higher values detect smaller question changes"
           value={settings.changeSensitivity}
           display={`${Math.round(settings.changeSensitivity * 100)}%`}
           onDecrement={() => updateSettings({ changeSensitivity: clamp(settings.changeSensitivity - 0.03, 0.03, 0.4) })}
@@ -140,21 +174,11 @@ export default function SettingsScreen() {
         <View style={[styles.divider, { backgroundColor: colors.border }]} />
         <StepperRow
           label="Frame Compare Interval"
-          description="How often to sample the screen for changes"
+          description="How often Live Assist checks for a new question"
           value={settings.frameCompareIntervalMs}
           display={`${settings.frameCompareIntervalMs / 1000}s`}
-          onDecrement={() => updateSettings({ frameCompareIntervalMs: clamp(settings.frameCompareIntervalMs - 500, 500, 5000) })}
-          onIncrement={() => updateSettings({ frameCompareIntervalMs: clamp(settings.frameCompareIntervalMs + 500, 500, 5000) })}
-          colors={colors}
-        />
-        <View style={[styles.divider, { backgroundColor: colors.border }]} />
-        <StepperRow
-          label="Stabilization Delay"
-          description="Wait after change detected before capturing"
-          value={settings.stabilizationDelayMs}
-          display={`${(settings.stabilizationDelayMs / 1000).toFixed(1)}s`}
-          onDecrement={() => updateSettings({ stabilizationDelayMs: clamp(settings.stabilizationDelayMs - 250, 300, 4000) })}
-          onIncrement={() => updateSettings({ stabilizationDelayMs: clamp(settings.stabilizationDelayMs + 250, 300, 4000) })}
+          onDecrement={() => updateSettings({ frameCompareIntervalMs: clamp(settings.frameCompareIntervalMs - 250, 750, 5000) })}
+          onIncrement={() => updateSettings({ frameCompareIntervalMs: clamp(settings.frameCompareIntervalMs + 250, 750, 5000) })}
           colors={colors}
         />
       </Section>
@@ -184,11 +208,15 @@ export default function SettingsScreen() {
           updateSettings({
             confidenceThreshold: 0.85,
             changeSensitivity: 0.12,
-            frameCompareIntervalMs: 2000,
+            frameCompareIntervalMs: 1000,
             stabilizationDelayMs: 1500,
             debugMode: false,
+            autoStart: true,
+            hapticAlerts: true,
           })
         }
+        accessibilityRole="button"
+        accessibilityLabel="Reset settings to defaults"
       >
         <Ionicons name="refresh-outline" size={18} color={colors.mutedForeground} />
         <Text style={[styles.resetText, { color: colors.mutedForeground }]}>Reset to Defaults</Text>

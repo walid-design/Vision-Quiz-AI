@@ -146,7 +146,7 @@ export default function HistoryScreen() {
         keyExtractor={(item) => item.id}
         contentContainerStyle={[
           styles.list,
-          { paddingTop: topInset + 16, paddingBottom: insets.bottom + 80 },
+          { paddingTop: topInset + 16, paddingBottom: insets.bottom + 110 },
         ]}
         scrollEnabled={history.length > 0}
         ListHeaderComponent={

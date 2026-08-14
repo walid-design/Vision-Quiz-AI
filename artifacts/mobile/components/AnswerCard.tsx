@@ -24,7 +24,12 @@ export function AnswerCard({ result, onDismiss, onMarkCorrect, onMarkIncorrect, 
       <View style={styles.header}>
         <Text style={[styles.headerLabel, { color: colors.mutedForeground }]}>ANSWER</Text>
         {onDismiss && (
-          <TouchableOpacity onPress={onDismiss} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
+          <TouchableOpacity
+            onPress={onDismiss}
+            hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+            accessibilityRole="button"
+            accessibilityLabel="Dismiss answer"
+          >
             <Ionicons name="close" size={20} color={colors.mutedForeground} />
           </TouchableOpacity>
         )}
@@ -84,6 +89,8 @@ export function AnswerCard({ result, onDismiss, onMarkCorrect, onMarkIncorrect, 
           <View style={styles.feedbackBtns}>
             <TouchableOpacity
               onPress={onMarkCorrect}
+              accessibilityRole="button"
+              accessibilityLabel="Mark answer as correct"
               style={[
                 styles.feedbackBtn,
                 {
@@ -96,6 +103,8 @@ export function AnswerCard({ result, onDismiss, onMarkCorrect, onMarkIncorrect, 
             </TouchableOpacity>
             <TouchableOpacity
               onPress={onMarkIncorrect}
+              accessibilityRole="button"
+              accessibilityLabel="Mark answer as incorrect"
               style={[
                 styles.feedbackBtn,
                 {

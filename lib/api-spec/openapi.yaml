@@ -80,6 +80,11 @@ components:
         sessionId:
           type: string
           description: Optional session identifier
+        confidenceThreshold:
+          type: number
+          minimum: 0.5
+          maximum: 0.99
+          description: Trigger an independent verification pass below this confidence
       required:
         - imageBase64
         - subject
@@ -87,6 +92,12 @@ components:
     QuizAnalysisResult:
       type: object
       properties:
+        questionDetected:
+          type: boolean
+          description: Whether a complete multiple-choice question and its choices were visible
+        captureGuidance:
+          type: string
+          description: Short camera guidance when a complete question was not detected
         question:
           type: string
           description: Detected question text
@@ -116,10 +127,15 @@ components:
         verifierAnswer:
           type: string
           description: Answer from the verification pass (if used)
+        firstPassAnswer:
+          type: string
+          description: Answer from the first analysis pass (if verification was used)
         processingTimeMs:
           type: number
           description: Total processing time in milliseconds
       required:
+        - questionDetected
+        - captureGuidance
         - question
         - options
         - answer
@@ -127,6 +143,7 @@ components:
         - confidence
         - explanation
         - needsVerification
+        - processingTimeMs
 
     ErrorResponse:
       type: object

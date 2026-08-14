@@ -18,6 +18,8 @@ export interface CropRegion {
 export interface QuizAnswer {
   id: string;
   timestamp: number;
+  questionDetected: boolean;
+  captureGuidance: string;
   question: string;
   options: Record<string, string>;
   answer: string;
@@ -41,16 +43,20 @@ export interface AppSettings {
   changeSensitivity: number;
   stabilizationDelayMs: number;
   debugMode: boolean;
+  autoStart: boolean;
+  hapticAlerts: boolean;
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
   subject: 'General Knowledge',
   customSubject: '',
   confidenceThreshold: 0.85,
-  frameCompareIntervalMs: 2000,
+  frameCompareIntervalMs: 1000,
   changeSensitivity: 0.12,
   stabilizationDelayMs: 1500,
   debugMode: false,
+  autoStart: true,
+  hapticAlerts: true,
 };
 
 export const SUBJECTS = [
