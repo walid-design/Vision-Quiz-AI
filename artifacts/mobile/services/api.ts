@@ -1,6 +1,4 @@
 import { type QuizAnswer } from '@/types';
-import { toByteArray } from 'base64-js';
-import jpeg from 'jpeg-js';
 
 export interface AnalysisResult {
   questionDetected: boolean;
@@ -71,44 +69,88 @@ export interface VisualSignature {
   sharpness: number;
 }
 
-/** Decode a tiny monitoring JPEG into a normalized 16x16 luminance signature. */
+const BASE64_ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
+
+/**
+ * Decode camera base64 without relying on Node buffers or an extra native/web
+ * package. Expo supplies standard, unwrapped base64, so this small decoder is
+ * sufficient for the monitoring thumbnails.
+ */
+function decodeBase64(value: string): Uint8Array {
+  const clean = value.replace(/\s/g, '');
+  const padding = clean.endsWith('==') ? 2 : clean.endsWith('=') ? 1 : 0;
+  const output = new Uint8Array(Math.max(0, Math.floor(clean.length * 3 / 4) - padding));
+  let outputIndex = 0;
+
+  for (let index = 0; index < clean.length; index += 4) {
+    const a = BASE64_ALPHABET.indexOf(clean[index] ?? '');
+    const b = BASE64_ALPHABET.indexOf(clean[index + 1] ?? '');
+    const c = BASE64_ALPHABET.indexOf(clean[index + 2] ?? '');
+    const d = BASE64_ALPHABET.indexOf(clean[index + 3] ?? '');
+    if (a < 0 || b < 0) break;
+
+    const packed = (a << 18) | (b << 12) | (Math.max(c, 0) << 6) | Math.max(d, 0);
+    if (outputIndex < output.length) output[outputIndex++] = (packed >> 16) & 0xff;
+    if (outputIndex < output.length) output[outputIndex++] = (packed >> 8) & 0xff;
+    if (outputIndex < output.length) output[outputIndex++] = packed & 0xff;
+  }
+
+  return output;
+}
+
+/** Find the compressed scan data, which follows screen content in row order. */
+function findJpegScanOffset(bytes: Uint8Array): number {
+  if (bytes[0] !== 0xff || bytes[1] !== 0xd8) return 0;
+  let offset = 2;
+
+  while (offset + 3 < bytes.length) {
+    while (bytes[offset] === 0xff) offset++;
+    const marker = bytes[offset++];
+    if (marker === undefined || marker === 0xd9) break;
+    if (marker === 0x01 || (marker >= 0xd0 && marker <= 0xd8)) continue;
+
+    const segmentLength = ((bytes[offset] ?? 0) << 8) | (bytes[offset + 1] ?? 0);
+    if (segmentLength < 2 || offset + segmentLength > bytes.length) break;
+    if (marker === 0xda) return offset + segmentLength;
+    offset += segmentLength;
+  }
+
+  return 0;
+}
+
+/**
+ * Build a dependency-free visual fingerprint from a tiny JPEG. Dividing the
+ * ordered scan data into regions preserves coarse layout changes, while byte
+ * histograms remain stable across harmless camera noise and exposure shifts.
+ */
 export function createVisualSignature(imageBase64: string): VisualSignature {
-  const decoded = jpeg.decode(toByteArray(imageBase64), {
-    useTArray: true,
-    formatAsRGBA: true,
-  });
-  const grid = 16;
+  const bytes = decodeBase64(imageBase64);
+  const scanOffset = findJpegScanOffset(bytes);
+  const endOffset = bytes.length >= 2 && bytes[bytes.length - 2] === 0xff && bytes[bytes.length - 1] === 0xd9
+    ? bytes.length - 2
+    : bytes.length;
+  const dataStart = Math.min(scanOffset, endOffset);
+  const dataLength = Math.max(0, endOffset - dataStart);
+  const regions = 16;
+  const buckets = 16;
   const pixels: number[] = [];
 
-  for (let row = 0; row < grid; row++) {
-    const y = Math.min(decoded.height - 1, Math.floor(((row + 0.5) / grid) * decoded.height));
-    for (let col = 0; col < grid; col++) {
-      const x = Math.min(decoded.width - 1, Math.floor(((col + 0.5) / grid) * decoded.width));
-      const offset = (y * decoded.width + x) * 4;
-      const r = decoded.data[offset] ?? 0;
-      const g = decoded.data[offset + 1] ?? 0;
-      const b = decoded.data[offset + 2] ?? 0;
-      pixels.push(Math.round(0.299 * r + 0.587 * g + 0.114 * b));
+  for (let region = 0; region < regions; region++) {
+    const start = dataStart + Math.floor(dataLength * region / regions);
+    const end = dataStart + Math.floor(dataLength * (region + 1) / regions);
+    const histogram = new Array<number>(buckets).fill(0);
+
+    for (let index = start; index < end; index++) {
+      histogram[(bytes[index] ?? 0) >>> 4] += 1;
+    }
+
+    const regionLength = Math.max(1, end - start);
+    for (const count of histogram) {
+      pixels.push(Math.round(count / regionLength * 255));
     }
   }
 
-  let edgeEnergy = 0;
-  let edgeCount = 0;
-  for (let row = 0; row < grid; row++) {
-    for (let col = 0; col < grid; col++) {
-      const index = row * grid + col;
-      if (col + 1 < grid) {
-        edgeEnergy += Math.abs(pixels[index] - pixels[index + 1]);
-        edgeCount++;
-      }
-      if (row + 1 < grid) {
-        edgeEnergy += Math.abs(pixels[index] - pixels[index + grid]);
-        edgeCount++;
-      }
-    }
-  }
-
-  return { pixels, sharpness: edgeCount ? edgeEnergy / edgeCount / 255 : 0 };
+  return { pixels, sharpness: Math.min(1, dataLength / 6_000) };
 }
 
 /** Compare visual content while discounting global exposure changes. */
